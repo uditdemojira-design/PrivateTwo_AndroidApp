@@ -1,7 +1,7 @@
 services:
   - type: web
     name: privatetwo-signaling
-    runtime: node
+    env: node
     rootDir: server
     buildCommand: npm install
     startCommand: node signaling_server.js
