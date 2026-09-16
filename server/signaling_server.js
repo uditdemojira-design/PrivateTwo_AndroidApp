@@ -13,18 +13,44 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8088;
 const PAIRING_CODE_TTL_MS = 180 * 1000; // 3 minutes
+const LOG_LEVEL = process.env.LOG_LEVEL || 'warn';
+
+function logDebug(msg) { if (LOG_LEVEL === 'debug') console.log(`[Signaling:DEBUG] ${msg}`); }
+function logInfo(msg) { if (LOG_LEVEL === 'info' || LOG_LEVEL === 'debug') console.log(`[Signaling:INFO] ${msg}`); }
+function logWarn(msg) { if (LOG_LEVEL !== 'error') console.warn(`[Signaling:WARN] ${msg}`); }
+function logError(msg) { console.error(`[Signaling:ERROR] ${msg}`); }
+
+const stats = {
+    totalConnections: 0,
+    totalMessagesRelayed: 0,
+    startTime: Date.now()
+};
 
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
+        const mem = process.memoryUsage();
+        const uptimeSec = Math.floor((Date.now() - stats.startTime) / 1000);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'healthy', activeSessions: sessions.size }));
+        res.end(JSON.stringify({
+            status: 'healthy',
+            uptimeSeconds: uptimeSec,
+            activeConnections: wss.clients.size,
+            activeSessions: sessions.size,
+            totalConnectionsServed: stats.totalConnections,
+            totalMessagesRelayed: stats.totalMessagesRelayed,
+            memory: {
+                heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024 * 10) / 10,
+                heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024 * 10) / 10,
+                rssMB: Math.round(mem.rss / 1024 / 1024 * 10) / 10
+            }
+        }));
     } else {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('PrivateTwo Ephemeral Signaling Server. No content is stored.');
     }
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, backlog: 1024, maxPayload: 64 * 1024 * 1024 });
 
 const pairingCodes = new Map();
 const sessions = new Map();
@@ -37,42 +63,59 @@ function safeSend(ws, payload) {
     try {
         const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
         ws.send(data, (err) => {
-            if (err) console.error(`[Signaling] safeSend callback error: ${err.message}`);
+            if (err) logError(`safeSend callback error: ${err.message}`);
         });
         return true;
     } catch (err) {
-        console.error(`[Signaling] safeSend exception: ${err.message}`);
+        logError(`safeSend exception: ${err.message}`);
         return false;
     }
 }
 
 wss.on('connection', (ws, req) => {
+    stats.totalConnections++;
     ws.isAlive = true;
     const clientIp = req.socket.remoteAddress;
-    console.log(`[Signaling] New WebSocket connection from ${clientIp}`);
+    logDebug(`New WebSocket connection from ${clientIp}`);
     ws.on('pong', () => { ws.isAlive = true; });
 
     ws.on('message', (data) => {
         try {
             const message = JSON.parse(data.toString());
-            console.log(`[Signaling] Received message: ${message.type}`);
+            logDebug(`Received message: ${message.type}`);
             handleMessage(ws, message);
         } catch (err) {
-            console.error(`[Signaling] Malformed JSON: ${err.message}`);
+            logError(`Malformed JSON: ${err.message}`);
             sendError(ws, 'MALFORMED_JSON', 'Invalid JSON message payload');
         }
     });
 
     ws.on('close', () => {
-        console.log(`[Signaling] Client disconnected`);
+        logDebug(`Client disconnected`);
         handleDisconnect(ws);
     });
 
     ws.on('error', (err) => {
-        console.error(`[Signaling] Socket error: ${err.message}`);
+        logError(`Socket error: ${err.message}`);
         handleDisconnect(ws);
     });
 });
+
+function removeWsFromSession(ws) {
+    const sessionId = wsToSession.get(ws);
+    if (sessionId) {
+        wsToSession.delete(ws);
+        const session = sessions.get(sessionId);
+        if (session) {
+            if (session.deviceA === ws) session.deviceA = null;
+            if (session.deviceB === ws) session.deviceB = null;
+
+            if (!session.deviceA && !session.deviceB) {
+                sessions.delete(sessionId);
+            }
+        }
+    }
+}
 
 function handleMessage(ws, msg) {
     const type = msg.type;
@@ -153,6 +196,11 @@ function handleMessage(ws, msg) {
             // Find current active socket for initiator
             const activeInitiatorWs = deviceIdToWs.get(entry.initiatorDeviceId) || entry.initiatorWs;
 
+            removeWsFromSession(ws);
+            if (activeInitiatorWs) {
+                removeWsFromSession(activeInitiatorWs);
+            }
+
             const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             const session = {
                 id: sessionId,
@@ -197,6 +245,11 @@ function handleMessage(ws, msg) {
 
             if (!sessionId || !deviceId || !expectedPeerId) {
                 return sendError(ws, 'INVALID_REQUEST', 'Missing sessionId, deviceId, or expectedPeerId');
+            }
+
+            const prevSessionId = wsToSession.get(ws);
+            if (prevSessionId && prevSessionId !== sessionId) {
+                removeWsFromSession(ws);
             }
 
             let session = sessions.get(sessionId);
@@ -268,6 +321,7 @@ function handleMessage(ws, msg) {
                 return sendError(ws, 'PEER_OFFLINE', 'Partner device is currently offline');
             }
 
+            stats.totalMessagesRelayed++;
             safeSend(partnerWs, msg);
             break;
         }
