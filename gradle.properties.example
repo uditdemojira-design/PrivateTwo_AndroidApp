@@ -1,0 +1,11 @@
+# Example Gradle properties for release signing and custom builds
+# Copy to ~/.gradle/gradle.properties or project gradle.properties (do NOT commit secrets)
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+
+# Release signing keystore configuration (set via environment or secure CI/CD)
+# RELEASE_STORE_FILE=../my-release-key.jks
+# RELEASE_STORE_PASSWORD=your_keystore_password
+# RELEASE_KEY_ALIAS=privatetwo_key
+# RELEASE_KEY_PASSWORD=your_key_password

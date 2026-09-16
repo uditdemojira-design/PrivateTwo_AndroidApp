@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">PrivateTwo</string>
+    <string name="app_tagline">Strictly Private 1-to-1 Communication</string>
+
+    <!-- Pairing -->
+    <string name="pairing_title">Device Pairing</string>
+    <string name="pairing_code_label">Pairing Code</string>
+    <string name="device_paired_successfully">Device paired successfully</string>
+    <string name="unpair_device">Unpair Device</string>
+    <string name="confirm_unpair_title">Unpair Device?</string>
+    <string name="confirm_unpair_message">This will permanently invalidate your cryptographic trust and wipe all local conversation history. You will need to pair again to communicate.</string>
+    <string name="sas_verification_title">Verify Security Code</string>
+    <string name="sas_verification_message">Ensure the security code below matches the code on your partner\'s screen exactly.</string>
+    <string name="sas_confirm_button">Confirm Match</string>
+    <string name="sas_reject_button">Reject / Disconnect</string>
+
+    <!-- Status -->
+    <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_reconnecting">Reconnecting…</string>
+    <string name="status_offline">Offline</string>
+
+    <!-- Calls -->
+    <string name="call_audio">Audio Call</string>
+    <string name="call_video">Video Call</string>
+    <string name="incoming_call">Incoming Call…</string>
+    <string name="call_ended">Call Ended</string>
+    <string name="call_connecting">Connecting Call…</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">Private Messages</string>
+    <string name="notification_channel_desc">Alerts for incoming private messages</string>
+    <string name="notification_private_message">New private message</string>
+    <string name="notification_call_channel_name">Incoming Calls</string>
+    <string name="notification_incoming_call">Incoming encrypted call</string>
+</resources>

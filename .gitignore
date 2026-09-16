@@ -1,0 +1,23 @@
+# Gradle and build
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+
+# Local properties and private configs
+local.properties
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+.gradle-build/
+
+# Node server dependencies
+server/node_modules/
+server/.env
+
+# Temporary dumps and logs
+*.xml.dump
+*_dump.xml
+*.log

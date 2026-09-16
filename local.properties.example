@@ -1,0 +1,16 @@
+## PrivateTwo Local Environment Properties Template
+## Rename to local.properties and customize. Do NOT commit production credentials to version control.
+
+## Android SDK Location
+sdk.dir=C:\\Users\\asus\\AppData\\Local\\Android\\Sdk
+
+## STUN and TURN Infrastructure (Externalized, no hardcoded secrets)
+# Format: stun:stun.l.google.com:19302
+privatetwo.stun.server=stun:stun.l.google.com:19302
+# Optional TURN server for symmetric NAT traversal
+# privatetwo.turn.server=turn:turn.example.com:3478
+# privatetwo.turn.username=ephemeral_user
+# privatetwo.turn.credential=ephemeral_password
+
+## Ephemeral Signaling Server URL (TLS / WSS in production)
+privatetwo.signaling.url=ws://10.0.2.2:8080

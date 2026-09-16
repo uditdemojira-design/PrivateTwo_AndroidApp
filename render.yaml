@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: privatetwo-signaling
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node signaling_server.js
+    plan: free
+    healthCheckPath: /health
