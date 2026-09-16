@@ -43,6 +43,19 @@ class PrivateTwoApp : Application() {
         fileTransferManager = FileTransferManager(this, database, secureStorage)
         chatRepository = ChatRepository(this, database, secureStorage, signalingClient, webRtcSessionManager, fileTransferManager)
 
+        signalingClient.onConnected = {
+            if (secureStorage.isPaired()) {
+                val localId = secureStorage.getLocalDeviceId()
+                val peerId = secureStorage.getPairedPeerDeviceId()
+                if (peerId != null) {
+                    val directSessionId = listOf(localId, peerId).sorted().joinToString("_")
+                    signalingClient.joinDirectSession(directSessionId, localId, peerId)
+                }
+            } else {
+                pairingManager.onSocketReconnected()
+            }
+        }
+
         createNotificationChannels()
     }
 

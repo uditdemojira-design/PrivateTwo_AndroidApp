@@ -52,7 +52,11 @@ class SecureStorage(private val context: Context) {
         private const val KEY_BIOMETRIC_LOCK = "biometric_lock_enabled"
         private const val KEY_STEALTH_NOTIFICATIONS = "stealth_notifications_enabled"
 
-        // Ephemeral session keys (stored only in memory during runtime)
+        private const val KEY_OUTBOUND_KEY = "outbound_session_key"
+        private const val KEY_INBOUND_KEY = "inbound_session_key"
+        private const val KEY_IS_INITIATOR = "is_initiator"
+
+        // Ephemeral session keys cached in memory
         @Volatile
         var activeInboundSessionKey: ByteArray? = null
         @Volatile
@@ -147,26 +151,95 @@ class SecureStorage(private val context: Context) {
      * Enforces strict 2-device limit.
      */
     @Synchronized
-    fun savePairedPeer(peerPublicKey: PublicKey) {
+    fun savePairedPeer(
+        peerPublicKey: PublicKey,
+        outboundKey: ByteArray? = null,
+        inboundKey: ByteArray? = null,
+        isInitiator: Boolean = false
+    ) {
         val deviceId = CryptoEngine.computeDeviceId(peerPublicKey)
         val base64Key = CryptoEngine.encodePublicKey(peerPublicKey)
 
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_PEER_PUBLIC_KEY, base64Key)
             .putString(KEY_PEER_DEVICE_ID, deviceId)
             .putBoolean(KEY_IS_PAIRED, true)
+            .putBoolean(KEY_IS_INITIATOR, isInitiator)
+
+        if (outboundKey != null) {
+            editor.putString(KEY_OUTBOUND_KEY, Base64.getEncoder().encodeToString(outboundKey))
+            activeOutboundSessionKey = outboundKey
+        }
+        if (inboundKey != null) {
+            editor.putString(KEY_INBOUND_KEY, Base64.getEncoder().encodeToString(inboundKey))
+            activeInboundSessionKey = inboundKey
+        }
+        editor.apply()
+    }
+
+    @Synchronized
+    fun saveSessionKeys(outboundKey: ByteArray, inboundKey: ByteArray) {
+        activeOutboundSessionKey = outboundKey
+        activeInboundSessionKey = inboundKey
+        prefs.edit()
+            .putString(KEY_OUTBOUND_KEY, Base64.getEncoder().encodeToString(outboundKey))
+            .putString(KEY_INBOUND_KEY, Base64.getEncoder().encodeToString(inboundKey))
             .apply()
+    }
+
+    fun getOutboundSessionKey(): ByteArray? {
+        val inMem = activeOutboundSessionKey
+        if (inMem != null) return inMem
+
+        val base64 = prefs.getString(KEY_OUTBOUND_KEY, null)
+        if (base64 != null) {
+            val key = Base64.getDecoder().decode(base64)
+            activeOutboundSessionKey = key
+            return key
+        }
+
+        // Dynamically recover session keys from stored peer key & identity key
+        val peerPub = getPairedPeerPublicKey() ?: return null
+        val localPair = getOrCreateIdentityKeyPair()
+        val isInit = prefs.getBoolean(KEY_IS_INITIATOR, false)
+        val sharedSecret = CryptoEngine.computeSharedSecret(localPair.private, peerPub)
+        val derived = CryptoEngine.deriveSessionKeys(sharedSecret, localPair.public, peerPub, isInit)
+        saveSessionKeys(derived.outboundKey, derived.inboundKey)
+        return derived.outboundKey
+    }
+
+    fun getInboundSessionKey(): ByteArray? {
+        val inMem = activeInboundSessionKey
+        if (inMem != null) return inMem
+
+        val base64 = prefs.getString(KEY_INBOUND_KEY, null)
+        if (base64 != null) {
+            val key = Base64.getDecoder().decode(base64)
+            activeInboundSessionKey = key
+            return key
+        }
+
+        val peerPub = getPairedPeerPublicKey() ?: return null
+        val localPair = getOrCreateIdentityKeyPair()
+        val isInit = prefs.getBoolean(KEY_IS_INITIATOR, false)
+        val sharedSecret = CryptoEngine.computeSharedSecret(localPair.private, peerPub)
+        val derived = CryptoEngine.deriveSessionKeys(sharedSecret, localPair.public, peerPub, isInit)
+        saveSessionKeys(derived.outboundKey, derived.inboundKey)
+        return derived.inboundKey
     }
 
     /**
      * Unpairs the device, permanently revokes the peer identity,
-     * and clears active in-memory session keys.
+     * and clears persistent session keys.
      */
     @Synchronized
     fun unpairDevice() {
         prefs.edit()
             .remove(KEY_PEER_PUBLIC_KEY)
             .remove(KEY_PEER_DEVICE_ID)
+            .remove(KEY_OUTBOUND_KEY)
+            .remove(KEY_INBOUND_KEY)
+            .remove(KEY_IS_INITIATOR)
             .putBoolean(KEY_IS_PAIRED, false)
             .apply()
 

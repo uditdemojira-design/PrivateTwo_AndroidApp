@@ -50,12 +50,21 @@ class PairingManager(
     private var pendingPeerPublicKey: PublicKey? = null
     private var pendingSessionKeys: DerivedSessionKeys? = null
     private var isInitiator: Boolean = false
+    private var activeGeneratedCode: String? = null
 
     init {
         scope.launch {
             signalingClient.events.collect { event ->
                 handleSignalingEvent(event)
             }
+        }
+    }
+
+    fun onSocketReconnected() {
+        val code = activeGeneratedCode
+        if (code != null && _uiState.value is PairingUiState.CodeGenerated) {
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            signalingClient.registerPairingCode(code, localDeviceId)
         }
     }
 
@@ -69,6 +78,7 @@ class PairingManager(
         val code = codeInt.toString()
         val localDeviceId = secureStorage.getLocalDeviceId()
         isInitiator = true
+        activeGeneratedCode = code
 
         signalingClient.connect()
         signalingClient.registerPairingCode(code, localDeviceId)
@@ -104,9 +114,13 @@ class PairingManager(
             return
         }
 
-        secureStorage.savePairedPeer(peerKey)
-        SecureStorage.activeOutboundSessionKey = sessionKeys.outboundKey
-        SecureStorage.activeInboundSessionKey = sessionKeys.inboundKey
+        val isInit = isInitiator
+        secureStorage.savePairedPeer(peerKey, sessionKeys.outboundKey, sessionKeys.inboundKey, isInit)
+
+        val localDeviceId = secureStorage.getLocalDeviceId()
+        val peerDeviceId = CryptoEngine.computeDeviceId(peerKey)
+        val directSessionId = listOf(localDeviceId, peerDeviceId).sorted().joinToString("_")
+        signalingClient.joinDirectSession(directSessionId, localDeviceId, peerDeviceId)
 
         val confirmMsg = JSONObject().put("type", "SAS_CONFIRMED")
         signalingClient.sendPairHandshake(confirmMsg.toString())
@@ -120,6 +134,7 @@ class PairingManager(
 
     fun cancelPairing(reason: String? = null) {
         countdownJob?.cancel()
+        activeGeneratedCode = null
         pendingPeerPublicKey = null
         pendingSessionKeys = null
         _uiState.value = if (reason != null) PairingUiState.Error(reason) else PairingUiState.Unpaired
@@ -163,6 +178,10 @@ class PairingManager(
                 _uiState.value = PairingUiState.Error("Pairing code expired.")
             }
             is SignalingEvent.Error -> {
+                if (_uiState.value is PairingUiState.CodeGenerated) {
+                    // Do not destroy the displayed pairing code on transient socket errors!
+                    return
+                }
                 countdownJob?.cancel()
                 _uiState.value = PairingUiState.Error(event.message)
             }

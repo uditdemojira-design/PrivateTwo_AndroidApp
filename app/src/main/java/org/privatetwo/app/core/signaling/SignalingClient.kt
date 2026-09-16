@@ -69,16 +69,40 @@ class SignalingClient(
     private val _events = MutableSharedFlow<SignalingEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SignalingEvent> = _events.asSharedFlow()
 
+    var onConnected: (() -> Unit)? = null
+
+    companion object {
+        fun sanitizeServerUrl(rawUrl: String): String {
+            var url = rawUrl.trim()
+            if (url.startsWith("https://", ignoreCase = true)) {
+                url = "wss://" + url.substring(8)
+            } else if (url.startsWith("http://", ignoreCase = true)) {
+                url = "ws://" + url.substring(7)
+            } else if (!url.startsWith("ws://", ignoreCase = true) && !url.startsWith("wss://", ignoreCase = true)) {
+                url = if (url.contains(".trycloudflare.com") || url.contains(".onrender.com") || url.contains(".loca.lt")) {
+                    "wss://$url"
+                } else {
+                    "ws://$url"
+                }
+            }
+            if (url.startsWith("ws://", ignoreCase = true) && (url.contains(".trycloudflare.com") || url.contains(".onrender.com") || url.contains(".loca.lt"))) {
+                url = "wss://" + url.substring(5)
+            }
+            return url
+        }
+    }
+
     fun updateServerUrl(newUrl: String) {
-        val trimmed = newUrl.trim()
-        if (serverUrl == trimmed) return
-        serverUrl = trimmed
+        val sanitized = sanitizeServerUrl(newUrl)
+        if (serverUrl == sanitized && _connectionState.value == SignalingConnectionState.CONNECTED) return
+        serverUrl = sanitized
         disconnect()
         connect()
     }
 
     fun connect() {
         shouldReconnect = true
+        serverUrl = sanitizeServerUrl(serverUrl)
         if (_connectionState.value == SignalingConnectionState.CONNECTED || _connectionState.value == SignalingConnectionState.CONNECTING) return
 
         _connectionState.value = SignalingConnectionState.CONNECTING
@@ -88,6 +112,7 @@ class SignalingClient(
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     _connectionState.value = SignalingConnectionState.CONNECTED
+                    onConnected?.invoke()
                     synchronized(pendingMessages) {
                         for (msg in pendingMessages) {
                             webSocket.send(msg)

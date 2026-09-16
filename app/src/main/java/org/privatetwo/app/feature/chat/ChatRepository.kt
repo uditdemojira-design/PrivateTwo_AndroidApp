@@ -92,7 +92,7 @@ class ChatRepository(
         val timestamp = System.currentTimeMillis()
         val localDeviceId = secureStorage.getLocalDeviceId()
         val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: throw IllegalStateException("Device not paired")
-        val outboundKey = SecureStorage.activeOutboundSessionKey ?: throw IllegalStateException("Active session key not established")
+        val outboundKey = secureStorage.getOutboundSessionKey() ?: throw IllegalStateException("Active session key not established")
 
         val plaintextBytes = text.toByteArray(Charsets.UTF_8)
         val envelope = MessageEnvelope.pack(
@@ -280,7 +280,7 @@ class ChatRepository(
                 return@withContext
             }
 
-            val inboundKey = SecureStorage.activeInboundSessionKey ?: return@withContext
+            val inboundKey = secureStorage.getInboundSessionKey() ?: return@withContext
 
             val decryptedBytes = MessageEnvelope.unpack(
                 envelope = envelope,

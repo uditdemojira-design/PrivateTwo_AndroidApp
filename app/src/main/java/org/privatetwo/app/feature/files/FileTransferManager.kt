@@ -93,7 +93,7 @@ class FileTransferManager(
 
         val localDeviceId = secureStorage.getLocalDeviceId()
         val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: throw IllegalStateException("Not paired")
-        val encryptionKey = SecureStorage.activeOutboundSessionKey ?: throw IllegalStateException("Session key not available")
+        val encryptionKey = secureStorage.getOutboundSessionKey() ?: throw IllegalStateException("Session key not available")
 
         val transferEntity = TransferEntity(
             id = transferId,
