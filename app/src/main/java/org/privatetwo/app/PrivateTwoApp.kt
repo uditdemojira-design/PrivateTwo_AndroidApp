@@ -72,8 +72,8 @@ class PrivateTwoApp : Application() {
         return if (isEmulator) {
             BuildConfig.DEFAULT_SIGNALING_URL // ws://10.0.2.2:8088
         } else {
-            // Real physical phone on local Wi-Fi connects to host PC IP
-            "ws://192.168.1.5:8088"
+            // Cloudflare Tunnel URL allowing devices on different Wi-Fi / mobile data to connect
+            "wss://potato-broader-breach-promote.trycloudflare.com"
         }
     }
 

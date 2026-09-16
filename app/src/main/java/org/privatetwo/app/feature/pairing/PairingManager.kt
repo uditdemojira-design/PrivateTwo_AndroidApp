@@ -47,10 +47,13 @@ class PairingManager(
     }
 
     private var countdownJob: Job? = null
+    private var handshakeRetryJob: Job? = null
     private var pendingPeerPublicKey: PublicKey? = null
     private var pendingSessionKeys: DerivedSessionKeys? = null
     private var isInitiator: Boolean = false
     private var activeGeneratedCode: String? = null
+    private var activeJoinCode: String? = null
+    private var joinRetryCount: Int = 0
 
     init {
         scope.launch {
@@ -66,6 +69,11 @@ class PairingManager(
             val localDeviceId = secureStorage.getLocalDeviceId()
             signalingClient.registerPairingCode(code, localDeviceId)
         }
+        val joinCode = activeJoinCode
+        if (joinCode != null && _uiState.value is PairingUiState.Connecting) {
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            signalingClient.joinPairingCode(joinCode, localDeviceId)
+        }
     }
 
     fun generatePairingCode() {
@@ -79,6 +87,7 @@ class PairingManager(
         val localDeviceId = secureStorage.getLocalDeviceId()
         isInitiator = true
         activeGeneratedCode = code
+        activeJoinCode = null
 
         signalingClient.connect()
         signalingClient.registerPairingCode(code, localDeviceId)
@@ -101,6 +110,8 @@ class PairingManager(
         signalingClient.connect()
         val localDeviceId = secureStorage.getLocalDeviceId()
         isInitiator = false
+        activeJoinCode = sanitizedCode
+        joinRetryCount = 0
 
         signalingClient.joinPairingCode(sanitizedCode, localDeviceId)
     }
@@ -134,7 +145,10 @@ class PairingManager(
 
     fun cancelPairing(reason: String? = null) {
         countdownJob?.cancel()
+        handshakeRetryJob?.cancel()
         activeGeneratedCode = null
+        activeJoinCode = null
+        joinRetryCount = 0
         pendingPeerPublicKey = null
         pendingSessionKeys = null
         _uiState.value = if (reason != null) PairingUiState.Error(reason) else PairingUiState.Unpaired
@@ -182,7 +196,25 @@ class PairingManager(
                     // Do not destroy the displayed pairing code on transient socket errors!
                     return
                 }
+                if (_uiState.value is PairingUiState.Connecting) {
+                    if (event.code == "CONNECTION_FAILED" || event.code == "PEER_OFFLINE") {
+                        // Transient connection issue during handshake; allow background retry
+                        return
+                    }
+                    if (event.code == "PAIRING_CODE_NOT_FOUND" && joinRetryCount < 2) {
+                        joinRetryCount++
+                        scope.launch {
+                            delay(1500)
+                            val joinCode = activeJoinCode
+                            if (joinCode != null && _uiState.value is PairingUiState.Connecting) {
+                                signalingClient.joinPairingCode(joinCode, secureStorage.getLocalDeviceId())
+                            }
+                        }
+                        return
+                    }
+                }
                 countdownJob?.cancel()
+                handshakeRetryJob?.cancel()
                 _uiState.value = PairingUiState.Error(event.message)
             }
             else -> Unit
@@ -190,12 +222,20 @@ class PairingManager(
     }
 
     private fun sendKeyExchangeOffer() {
+        handshakeRetryJob?.cancel()
         val localPair = secureStorage.getOrCreateIdentityKeyPair()
         val payload = JSONObject()
             .put("action", "OFFER_KEY")
             .put("publicKey", CryptoEngine.encodePublicKey(localPair.public))
             .put("deviceId", secureStorage.getLocalDeviceId())
-        signalingClient.sendPairHandshake(payload.toString())
+
+        handshakeRetryJob = scope.launch {
+            for (attempt in 1..4) {
+                if (_uiState.value !is PairingUiState.Connecting) break
+                signalingClient.sendPairHandshake(payload.toString())
+                delay(2500)
+            }
+        }
     }
 
     private fun handleHandshakePayload(jsonStr: String) {
@@ -217,6 +257,7 @@ class PairingManager(
                     computeKeysAndShowSas(localPair.public, localPair.private, remotePubKey)
                 }
                 "ANSWER_KEY" -> {
+                    handshakeRetryJob?.cancel()
                     val remotePubBase64 = json.getString("publicKey")
                     val remotePubKey = CryptoEngine.decodePublicKey(remotePubBase64)
                     pendingPeerPublicKey = remotePubKey

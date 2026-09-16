@@ -220,8 +220,8 @@ fun SignalingStatusCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SuggestionChip(
-                            onClick = { editUrl = "ws://10.0.2.2:8088" },
-                            label = { Text("Emulator") }
+                            onClick = { editUrl = "wss://potato-broader-breach-promote.trycloudflare.com" },
+                            label = { Text("Cloudflare Tunnel") }
                         )
                         SuggestionChip(
                             onClick = { editUrl = "ws://192.168.1.5:8088" },

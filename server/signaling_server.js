@@ -29,6 +29,22 @@ const wss = new WebSocketServer({ server });
 const pairingCodes = new Map();
 const sessions = new Map();
 const wsToSession = new Map();
+const deviceIdToWs = new Map();
+const pendingPairings = new Map(); // deviceId -> { sessionId, peerDeviceId }
+
+function safeSend(ws, payload) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+        const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        ws.send(data, (err) => {
+            if (err) console.error(`[Signaling] safeSend callback error: ${err.message}`);
+        });
+        return true;
+    } catch (err) {
+        console.error(`[Signaling] safeSend exception: ${err.message}`);
+        return false;
+    }
+}
 
 wss.on('connection', (ws, req) => {
     ws.isAlive = true;
@@ -61,9 +77,32 @@ wss.on('connection', (ws, req) => {
 function handleMessage(ws, msg) {
     const type = msg.type;
 
+    // Track deviceId to socket mapping if present
+    if (msg.deviceId) {
+        deviceIdToWs.set(msg.deviceId, ws);
+        ws.deviceId = msg.deviceId;
+
+        // Check if there is a pending pairing notification for this device
+        if (pendingPairings.has(msg.deviceId)) {
+            const pending = pendingPairings.get(msg.deviceId);
+            pendingPairings.delete(msg.deviceId);
+            wsToSession.set(ws, pending.sessionId);
+            const session = sessions.get(pending.sessionId);
+            if (session) {
+                if (session.deviceAId === msg.deviceId) session.deviceA = ws;
+                if (session.deviceBId === msg.deviceId) session.deviceB = ws;
+            }
+            safeSend(ws, {
+                type: 'PEER_JOINED_PAIRING',
+                sessionId: pending.sessionId,
+                peerDeviceId: pending.peerDeviceId
+            });
+        }
+    }
+
     switch (type) {
         case 'REGISTER_PAIRING_CODE': {
-            const code = msg.code;
+            const code = String(msg.code || '').replace(/\s+/g, '').trim();
             const deviceId = msg.deviceId;
             console.log(`[Signaling] Registering pairing code ${code} for device ${deviceId}`);
             if (!code || !deviceId) {
@@ -80,9 +119,7 @@ function handleMessage(ws, msg) {
 
             const timeoutId = setTimeout(() => {
                 pairingCodes.delete(code);
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'PAIRING_CODE_EXPIRED', code }));
-                }
+                safeSend(ws, { type: 'PAIRING_CODE_EXPIRED', code });
             }, PAIRING_CODE_TTL_MS);
 
             pairingCodes.set(code, {
@@ -92,16 +129,17 @@ function handleMessage(ws, msg) {
                 timeoutId
             });
 
-            ws.send(JSON.stringify({ type: 'PAIRING_CODE_REGISTERED', code, expiresInSeconds: 180 }));
+            safeSend(ws, { type: 'PAIRING_CODE_REGISTERED', code, expiresInSeconds: 180 });
             break;
         }
 
         case 'JOIN_PAIRING_CODE': {
-            const code = msg.code;
+            const code = String(msg.code || '').replace(/\s+/g, '').trim();
             const joinerDeviceId = msg.deviceId;
             const entry = pairingCodes.get(code);
 
             if (!entry) {
+                console.warn(`[Signaling] Pairing code not found: "${code}". Active codes: [${Array.from(pairingCodes.keys()).join(', ')}]`);
                 return sendError(ws, 'PAIRING_CODE_NOT_FOUND', 'Pairing code does not exist or has expired');
             }
 
@@ -112,30 +150,43 @@ function handleMessage(ws, msg) {
             clearTimeout(entry.timeoutId);
             pairingCodes.delete(code);
 
+            // Find current active socket for initiator
+            const activeInitiatorWs = deviceIdToWs.get(entry.initiatorDeviceId) || entry.initiatorWs;
+
             const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             const session = {
                 id: sessionId,
-                deviceA: entry.initiatorWs,
+                deviceA: activeInitiatorWs,
                 deviceAId: entry.initiatorDeviceId,
                 deviceB: ws,
                 deviceBId: joinerDeviceId
             };
 
             sessions.set(sessionId, session);
-            wsToSession.set(entry.initiatorWs, sessionId);
+            if (activeInitiatorWs) {
+                wsToSession.set(activeInitiatorWs, sessionId);
+            }
             wsToSession.set(ws, sessionId);
 
-            entry.initiatorWs.send(JSON.stringify({
-                type: 'PEER_JOINED_PAIRING',
-                sessionId,
-                peerDeviceId: joinerDeviceId
-            }));
+            if (activeInitiatorWs && activeInitiatorWs.readyState === WebSocket.OPEN) {
+                safeSend(activeInitiatorWs, {
+                    type: 'PEER_JOINED_PAIRING',
+                    sessionId,
+                    peerDeviceId: joinerDeviceId
+                });
+            } else {
+                console.log(`[Signaling] Initiator offline during pairing, saving pending notification for ${entry.initiatorDeviceId}`);
+                pendingPairings.set(entry.initiatorDeviceId, {
+                    sessionId,
+                    peerDeviceId: joinerDeviceId
+                });
+            }
 
-            ws.send(JSON.stringify({
+            safeSend(ws, {
                 type: 'PAIRING_ACCEPTED',
                 sessionId,
                 peerDeviceId: entry.initiatorDeviceId
-            }));
+            });
             break;
         }
 
@@ -159,7 +210,7 @@ function handleMessage(ws, msg) {
                 };
                 sessions.set(sessionId, session);
                 wsToSession.set(ws, sessionId);
-                ws.send(JSON.stringify({ type: 'SESSION_WAITING_FOR_PEER', sessionId }));
+                safeSend(ws, { type: 'SESSION_WAITING_FOR_PEER', sessionId });
             } else {
                 const isExpected = (deviceId === session.deviceBId && expectedPeerId === session.deviceAId) ||
                                   (deviceId === session.deviceAId && expectedPeerId === session.deviceBId);
@@ -186,9 +237,9 @@ function handleMessage(ws, msg) {
                 wsToSession.set(ws, sessionId);
 
                 const peerWs = (session.deviceA === ws) ? session.deviceB : session.deviceA;
-                ws.send(JSON.stringify({ type: 'PEER_CONNECTED', peerDeviceId: expectedPeerId }));
-                if (peerWs && peerWs.readyState === WebSocket.OPEN) {
-                    peerWs.send(JSON.stringify({ type: 'PEER_CONNECTED', peerDeviceId: deviceId }));
+                safeSend(ws, { type: 'PEER_CONNECTED', peerDeviceId: expectedPeerId });
+                if (peerWs) {
+                    safeSend(peerWs, { type: 'PEER_CONNECTED', peerDeviceId: deviceId });
                 }
             }
             break;
@@ -217,7 +268,7 @@ function handleMessage(ws, msg) {
                 return sendError(ws, 'PEER_OFFLINE', 'Partner device is currently offline');
             }
 
-            partnerWs.send(JSON.stringify(msg));
+            safeSend(partnerWs, msg);
             break;
         }
 
@@ -227,14 +278,17 @@ function handleMessage(ws, msg) {
 }
 
 function handleDisconnect(ws) {
+    if (ws.deviceId && deviceIdToWs.get(ws.deviceId) === ws) {
+        deviceIdToWs.delete(ws.deviceId);
+    }
     const sessionId = wsToSession.get(ws);
     if (sessionId) {
         wsToSession.delete(ws);
         const session = sessions.get(sessionId);
         if (session) {
             const partnerWs = (session.deviceA === ws) ? session.deviceB : session.deviceA;
-            if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
-                partnerWs.send(JSON.stringify({ type: 'PEER_DISCONNECTED' }));
+            if (partnerWs) {
+                safeSend(partnerWs, { type: 'PEER_DISCONNECTED' });
             }
             if (session.deviceA === ws) session.deviceA = null;
             if (session.deviceB === ws) session.deviceB = null;
@@ -246,19 +300,8 @@ function handleDisconnect(ws) {
     }
 }
 
-function cleanPairingCodeByWs(ws) {
-    for (const [code, entry] of pairingCodes.entries()) {
-        if (entry.initiatorWs === ws) {
-            clearTimeout(entry.timeoutId);
-            pairingCodes.delete(code);
-        }
-    }
-}
-
 function sendError(ws, code, message) {
-    if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', code, message }));
-    }
+    safeSend(ws, { type: 'ERROR', code, message });
 }
 
 setInterval(() => {
