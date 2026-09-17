@@ -2,6 +2,7 @@ package org.privatetwo.app.core.webrtc
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -444,6 +445,30 @@ class WebRtcSessionManager(
     }
 
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioDeviceCallback: AudioDeviceCallback? = null
+
+    private fun isHeadsetDevice(device: AudioDeviceInfo): Boolean {
+        return device.type in listOf(
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+        )
+    }
+
+    private fun hasConnectedHeadset(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.availableCommunicationDevices.any { isHeadsetDevice(it) }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { isHeadsetDevice(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            (audioManager.isWiredHeadsetOn || audioManager.isBluetoothScoOn || audioManager.isBluetoothA2dpOn)
+        }
+    }
 
     @Suppress("DEPRECATION")
     fun applySpeakerphoneRouting(enableSpeaker: Boolean) {
@@ -460,18 +485,35 @@ class WebRtcSessionManager(
                         audioManager.isSpeakerphoneOn = true
                     }
                 } else {
-                    val earpieceDevice = audioManager.availableCommunicationDevices.firstOrNull {
-                        it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
-                    }
-                    if (earpieceDevice != null) {
-                        audioManager.setCommunicationDevice(earpieceDevice)
+                    // Priority 1: Connected Wired / USB-C / Bluetooth Headset
+                    val headsetDevice = audioManager.availableCommunicationDevices.firstOrNull { isHeadsetDevice(it) }
+                    if (headsetDevice != null) {
+                        audioManager.setCommunicationDevice(headsetDevice)
                     } else {
-                        audioManager.clearCommunicationDevice()
-                        audioManager.isSpeakerphoneOn = false
+                        // Priority 2: Built-in Earpiece
+                        val earpieceDevice = audioManager.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                        }
+                        if (earpieceDevice != null) {
+                            audioManager.setCommunicationDevice(earpieceDevice)
+                        } else {
+                            audioManager.clearCommunicationDevice()
+                            audioManager.isSpeakerphoneOn = false
+                        }
                     }
                 }
             } else {
-                audioManager.isSpeakerphoneOn = enableSpeaker
+                if (enableSpeaker) {
+                    audioManager.isSpeakerphoneOn = true
+                } else {
+                    audioManager.isSpeakerphoneOn = false
+                    if (audioManager.isBluetoothScoAvailableOffCall) {
+                        try {
+                            audioManager.startBluetoothSco()
+                            audioManager.isBluetoothScoOn = true
+                        } catch (_: Exception) {}
+                    }
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("WebRtcManager", "Error applying speakerphone routing", e)
@@ -510,7 +552,37 @@ class WebRtcSessionManager(
 
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.isMicrophoneMute = false
-            applySpeakerphoneRouting(isVideo)
+
+            // Dynamic live headset detection (auto switch on headphone plug/unplug mid-call)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback == null) {
+                audioDeviceCallback = object : AudioDeviceCallback() {
+                    override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                        val hasNewHeadset = addedDevices?.any { isHeadsetDevice(it) } == true
+                        if (hasNewHeadset) {
+                            scope.launch {
+                                // Automatically switch audio into the newly connected headphone
+                                applySpeakerphoneRouting(false)
+                            }
+                        }
+                    }
+
+                    override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                        val removedHeadset = removedDevices?.any { isHeadsetDevice(it) } == true
+                        if (removedHeadset) {
+                            scope.launch {
+                                // Headphone unplugged: fallback to speaker for video, or earpiece for audio call
+                                applySpeakerphoneRouting(isVideoCallSession)
+                            }
+                        }
+                    }
+                }
+                audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+            }
+
+            // If headphone is plugged in, default audio to headphone even on video call!
+            val headsetConnected = hasConnectedHeadset()
+            val initialSpeaker = if (headsetConnected) false else isVideo
+            applySpeakerphoneRouting(initialSpeaker)
         } catch (e: Exception) {
             android.util.Log.e("WebRtcManager", "Error configuring audio routing", e)
         }
@@ -603,8 +675,18 @@ class WebRtcSessionManager(
     @Suppress("DEPRECATION")
     private fun cleanupMedia() {
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback != null) {
+                audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+                audioDeviceCallback = null
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 audioManager.clearCommunicationDevice()
+            }
+            if (audioManager.isBluetoothScoOn) {
+                try {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                } catch (_: Exception) {}
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
