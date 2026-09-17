@@ -1,12 +1,15 @@
 package org.privatetwo.app.core.webrtc
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.telecom.TelecomManager
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -305,10 +308,36 @@ class WebRtcSessionManager(
         }
     }
 
+    /**
+     * Terminates any ongoing cellular phone call on the device if ANSWER_PHONE_CALLS permission is granted.
+     */
+    fun terminateOngoingSystemCalls() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.ANSWER_PHONE_CALLS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    val ended = telecomManager?.endCall() ?: false
+                    android.util.Log.d("WebRtcManager", "Ongoing cellular call ended via TelecomManager: $ended")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("WebRtcManager", "Error attempting to end active phone call", e)
+        }
+    }
+
     fun startOutgoingCall(isVideo: Boolean) {
         isVideoCallSession = isVideo
         _callState.value = WebRtcCallState.OUTGOING_CALL
         executor.execute {
+            // Cut any active cellular/system call and any previous call session in app
+            terminateOngoingSystemCalls()
+            if (peerConnection != null) {
+                cleanupMedia()
+            }
             configureAudioRouting(isVideo)
             startLocalMedia(isVideo)
             peerConnection = createPeerConnection()
@@ -342,12 +371,16 @@ class WebRtcSessionManager(
         isVideoCallSession = isVideo
         _callState.value = WebRtcCallState.CONNECTING
         executor.execute {
+            // Cut any active cellular phone call immediately
+            terminateOngoingSystemCalls()
+            // Cut and clean up any previous active call session in the app
+            if (peerConnection != null) {
+                cleanupMedia()
+            }
             configureAudioRouting(isVideo)
             startLocalMedia(isVideo)
 
-            if (peerConnection == null) {
-                peerConnection = createPeerConnection()
-            }
+            peerConnection = createPeerConnection()
             localAudioTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
             localVideoTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
 
@@ -535,7 +568,7 @@ class WebRtcSessionManager(
                     .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
-                val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                     .setAudioAttributes(playbackAttributes)
                     .setAcceptsDelayedFocusGain(true)
                     .setOnAudioFocusChangeListener { /* maintain audio focus */ }
@@ -546,7 +579,7 @@ class WebRtcSessionManager(
                 audioManager.requestAudioFocus(
                     null,
                     AudioManager.STREAM_VOICE_CALL,
-                    AudioManager.AUDIOFOCUS_GAIN
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
                 )
             }
 

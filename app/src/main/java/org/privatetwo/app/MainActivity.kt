@@ -120,15 +120,20 @@ class MainActivity : FragmentActivity() {
                     val callPermissionLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.RequestMultiplePermissions()
                     ) { permissions ->
-                        val allGranted = permissions.values.all { it }
-                        if (allGranted) {
+                        val hasAudio = permissions[Manifest.permission.RECORD_AUDIO]
+                            ?: (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                        if (hasAudio) {
                             pendingCallAction?.invoke()
                         }
                         pendingCallAction = null
                     }
 
                     fun runWithPermissions(needed: List<String>, onGranted: () -> Unit) {
-                        val missing = needed.filter {
+                        val fullList = needed.toMutableList()
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            fullList.add(Manifest.permission.ANSWER_PHONE_CALLS)
+                        }
+                        val missing = fullList.filter {
                             ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
                         }
                         if (missing.isEmpty()) {

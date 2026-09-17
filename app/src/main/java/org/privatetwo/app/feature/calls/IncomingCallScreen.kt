@@ -8,9 +8,12 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
@@ -19,6 +22,7 @@ import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,6 +37,22 @@ fun IncomingCallScreen(
     onReject: () -> Unit
 ) {
     val context = LocalContext.current
+
+    val telecomManager = remember { context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager }
+    val telephonyManager = remember { context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager }
+
+    val isOngoingCallDetected = remember {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && telecomManager != null) {
+                telecomManager.isInCall
+            } else {
+                @Suppress("DEPRECATION")
+                telephonyManager?.callState != TelephonyManager.CALL_STATE_IDLE
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     DisposableEffect(Unit) {
         val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
@@ -124,7 +144,36 @@ fun IncomingCallScreen(
                 color = Color.White
             )
 
-            Spacer(modifier = Modifier.height(64.dp))
+            Spacer(modifier = Modifier.height(32.dp))
+
+            if (isOngoingCallDetected) {
+                Surface(
+                    color = Color(0xFFD32F2F).copy(alpha = 0.25f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = null,
+                            tint = Color(0xFFFF8A80),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Ongoing call active: accepting will end it",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFFCDD2)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+            } else {
+                Spacer(modifier = Modifier.height(32.dp))
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(48.dp),
