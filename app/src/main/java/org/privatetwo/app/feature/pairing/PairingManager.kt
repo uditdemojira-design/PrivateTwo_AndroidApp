@@ -77,10 +77,8 @@ class PairingManager(
     }
 
     fun generatePairingCode() {
-        if (secureStorage.isPaired()) {
-            _uiState.value = PairingUiState.Error("Device is already paired. Max 2 devices allowed.")
-            return
-        }
+        // Reset any stale or partial pairing state
+        secureStorage.unpairDevice()
 
         val codeInt = 100_000 + secureRandom.nextInt(900_000)
         val code = codeInt.toString()
@@ -95,16 +93,14 @@ class PairingManager(
     }
 
     fun enterPairingCode(code: String) {
-        if (secureStorage.isPaired()) {
-            _uiState.value = PairingUiState.Error("Device is already paired. Max 2 devices allowed.")
-            return
-        }
-
         val sanitizedCode = code.replace(" ", "").trim()
         if (sanitizedCode.length != 6 || !sanitizedCode.all { it.isDigit() }) {
             _uiState.value = PairingUiState.Error("Pairing code must be exactly 6 digits.")
             return
         }
+
+        // Reset any stale or partial pairing state
+        secureStorage.unpairDevice()
 
         _uiState.value = PairingUiState.Connecting("Connecting to partner with code $sanitizedCode...")
         signalingClient.connect()
@@ -196,15 +192,19 @@ class PairingManager(
                     // Do not destroy the displayed pairing code on transient socket errors!
                     return
                 }
+                if (_uiState.value is PairingUiState.Unpaired) {
+                    // In unpaired state, keep the screen interactive; connection status is shown in the top badge.
+                    return
+                }
                 if (_uiState.value is PairingUiState.Connecting) {
-                    if (event.code == "CONNECTION_FAILED" || event.code == "PEER_OFFLINE") {
+                    if (event.code == "CONNECTION_FAILED" || event.code == "PEER_OFFLINE" || event.code == "NOT_IN_SESSION") {
                         // Transient connection issue during handshake; allow background retry
                         return
                     }
-                    if (event.code == "PAIRING_CODE_NOT_FOUND" && joinRetryCount < 2) {
+                    if (event.code == "PAIRING_CODE_NOT_FOUND" && joinRetryCount < 3) {
                         joinRetryCount++
                         scope.launch {
-                            delay(1500)
+                            delay(1200)
                             val joinCode = activeJoinCode
                             if (joinCode != null && _uiState.value is PairingUiState.Connecting) {
                                 signalingClient.joinPairingCode(joinCode, secureStorage.getLocalDeviceId())

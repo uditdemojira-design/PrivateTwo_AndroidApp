@@ -38,6 +38,7 @@ class PrivateTwoApp : Application() {
         val defaultUrl = getDefaultSignalingUrl()
         val initialSignalingUrl = secureStorage.getSignalingUrl(defaultUrl)
         signalingClient = SignalingClient(initialSignalingUrl)
+        signalingClient.localDeviceId = secureStorage.getLocalDeviceId()
         webRtcSessionManager = WebRtcSessionManager(this, signalingClient)
         pairingManager = PairingManager(secureStorage, signalingClient)
         fileTransferManager = FileTransferManager(this, database, secureStorage)
@@ -72,8 +73,8 @@ class PrivateTwoApp : Application() {
         return if (isEmulator) {
             BuildConfig.DEFAULT_SIGNALING_URL // ws://10.0.2.2:8088
         } else {
-            // Cloudflare Tunnel URL allowing devices on different Wi-Fi / mobile data to connect
-            "wss://forever-steel-played-ranging.trycloudflare.com"
+            // Local Wi-Fi IP for direct, fast, zero-delay communication on same Wi-Fi
+            "ws://192.168.1.5:8088"
         }
     }
 

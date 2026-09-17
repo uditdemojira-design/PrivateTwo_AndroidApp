@@ -220,12 +220,12 @@ fun SignalingStatusCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SuggestionChip(
-                            onClick = { editUrl = "wss://forever-steel-played-ranging.trycloudflare.com" },
-                            label = { Text("Cloudflare Tunnel") }
+                            onClick = { editUrl = "ws://192.168.1.5:8088" },
+                            label = { Text("🏠 Same Wi-Fi (PC)") }
                         )
                         SuggestionChip(
-                            onClick = { editUrl = "ws://192.168.1.5:8088" },
-                            label = { Text("Wi-Fi PC") }
+                            onClick = { editUrl = "wss://hydrocodone-football-divide-politics.trycloudflare.com" },
+                            label = { Text("🌐 Cloudflare Tunnel") }
                         )
                     }
                 }
@@ -262,17 +262,38 @@ fun UnpairedView(
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         SignalingStatusCard(
             connectionState = connectionState,
             serverUrl = serverUrl,
             onUpdateServerUrl = onUpdateServerUrl
         )
+
+        // 1-Tap Quick Network Switcher
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val isWifi = serverUrl.contains("192.168.") || serverUrl.contains("10.0.2.2")
+            FilterChip(
+                selected = isWifi,
+                onClick = { onUpdateServerUrl("ws://192.168.1.5:8088") },
+                label = { Text("🏠 Same Wi-Fi", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = !isWifi,
+                onClick = { onUpdateServerUrl("wss://hydrocodone-football-divide-politics.trycloudflare.com") },
+                label = { Text("🌐 Online Tunnel", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
         Icon(
             imageVector = Icons.Default.Security,
             contentDescription = "Security",
-            modifier = Modifier.size(64.dp),
+            modifier = Modifier.size(56.dp),
             tint = MaterialTheme.colorScheme.primary
         )
 

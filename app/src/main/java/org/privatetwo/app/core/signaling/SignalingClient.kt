@@ -70,6 +70,7 @@ class SignalingClient(
     val events: SharedFlow<SignalingEvent> = _events.asSharedFlow()
 
     var onConnected: (() -> Unit)? = null
+    var localDeviceId: String? = null
 
     companion object {
         fun sanitizeServerUrl(rawUrl: String): String {
@@ -112,6 +113,10 @@ class SignalingClient(
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     _connectionState.value = SignalingConnectionState.CONNECTED
+                    localDeviceId?.let { devId ->
+                        val idMsg = JSONObject().put("type", "IDENTIFY").put("deviceId", devId)
+                        webSocket.send(idMsg.toString())
+                    }
                     onConnected?.invoke()
                     synchronized(pendingMessages) {
                         for (msg in pendingMessages) {
@@ -204,10 +209,14 @@ class SignalingClient(
         send(msg.toString())
     }
 
-    fun sendPairHandshake(payload: String) {
+    fun sendPairHandshake(payload: String, deviceId: String? = null) {
         val msg = JSONObject()
             .put("type", "PAIR_HANDSHAKE")
             .put("payload", payload)
+        val devId = deviceId ?: localDeviceId
+        if (devId != null) {
+            msg.put("deviceId", devId)
+        }
         send(msg.toString())
     }
 
@@ -261,12 +270,21 @@ class SignalingClient(
     }
 
     private fun send(json: String): Boolean {
+        var finalJson = json
+        val devId = localDeviceId
+        if (devId != null && !json.contains("\"deviceId\"")) {
+            try {
+                val obj = JSONObject(json)
+                obj.put("deviceId", devId)
+                finalJson = obj.toString()
+            } catch (_: Exception) {}
+        }
         val ws = webSocket
         if (_connectionState.value == SignalingConnectionState.CONNECTED && ws != null) {
-            return ws.send(json)
+            return ws.send(finalJson)
         } else {
             synchronized(pendingMessages) {
-                pendingMessages.add(json)
+                pendingMessages.add(finalJson)
             }
             if (_connectionState.value == SignalingConnectionState.DISCONNECTED) {
                 connect()

@@ -263,7 +263,7 @@ class SecureStorage(private val context: Context) {
 
     fun getSignalingUrl(defaultUrl: String): String {
         val saved = prefs.getString("signaling_server_url", null)
-        if (saved.isNullOrBlank() || saved.contains(":8080") || (saved.contains("10.0.2.2") && !defaultUrl.contains("10.0.2.2"))) {
+        if (saved.isNullOrBlank() || saved.contains(":8080") || saved.contains("forever-steel-played-ranging") || (saved.contains("10.0.2.2") && !defaultUrl.contains("10.0.2.2"))) {
             return defaultUrl
         }
         return saved
