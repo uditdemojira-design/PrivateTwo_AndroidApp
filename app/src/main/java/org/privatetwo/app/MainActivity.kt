@@ -129,11 +129,7 @@ class MainActivity : FragmentActivity() {
                     }
 
                     fun runWithPermissions(needed: List<String>, onGranted: () -> Unit) {
-                        val fullList = needed.toMutableList()
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            fullList.add(Manifest.permission.ANSWER_PHONE_CALLS)
-                        }
-                        val missing = fullList.filter {
+                        val missing = needed.filter {
                             ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
                         }
                         if (missing.isEmpty()) {

@@ -46,28 +46,24 @@ android {
 
     signingConfigs {
         create("release") {
-            val storeFileEnv = System.getenv("RELEASE_STORE_FILE") ?: localProperties.getProperty("release.store.file")
-            val storePasswordEnv = System.getenv("RELEASE_STORE_PASSWORD") ?: localProperties.getProperty("release.store.password")
-            val keyAliasEnv = System.getenv("RELEASE_KEY_ALIAS") ?: localProperties.getProperty("release.key.alias")
-            val keyPasswordEnv = System.getenv("RELEASE_KEY_PASSWORD") ?: localProperties.getProperty("release.key.password")
-
-            if (!storeFileEnv.isNullOrBlank() && file(storeFileEnv).exists()) {
-                storeFile = file(storeFileEnv)
-                storePassword = storePasswordEnv
-                keyAlias = keyAliasEnv
-                keyPassword = keyPasswordEnv
+            val jksFile = file("privatetwo-release.jks")
+            if (jksFile.exists()) {
+                storeFile = jksFile
+                storePassword = "PrivateTwo2026SecureKey"
+                keyAlias = "privatetwo"
+                keyPassword = "PrivateTwo2026SecureKey"
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
             val releaseSigning = signingConfigs.getByName("release")
             if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
                 signingConfig = releaseSigning

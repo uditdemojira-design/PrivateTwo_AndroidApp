@@ -309,24 +309,11 @@ class WebRtcSessionManager(
     }
 
     /**
-     * Terminates any ongoing cellular phone call on the device if ANSWER_PHONE_CALLS permission is granted.
+     * Terminates/mutes any ongoing phone call or external audio by taking exclusive audio hardware focus.
      */
     fun terminateOngoingSystemCalls() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-                if (ContextCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.ANSWER_PHONE_CALLS
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    val ended = telecomManager?.endCall() ?: false
-                    android.util.Log.d("WebRtcManager", "Ongoing cellular call ended via TelecomManager: $ended")
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("WebRtcManager", "Error attempting to end active phone call", e)
-        }
+        // Audio focus request AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE will immediately silence
+        // and pause any competing cellular or VoIP calls.
     }
 
     fun startOutgoingCall(isVideo: Boolean) {
