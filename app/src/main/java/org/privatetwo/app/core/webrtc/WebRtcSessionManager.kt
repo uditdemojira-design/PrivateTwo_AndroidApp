@@ -1,7 +1,11 @@
 package org.privatetwo.app.core.webrtc
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,6 +162,7 @@ class WebRtcSessionManager(
                 when (state) {
                     PeerConnection.IceConnectionState.CONNECTED -> {
                         _callState.value = WebRtcCallState.CONNECTED
+                        optimizeVideoQuality()
                     }
                     PeerConnection.IceConnectionState.DISCONNECTED,
                     PeerConnection.IceConnectionState.FAILED -> {
@@ -196,6 +201,7 @@ class WebRtcSessionManager(
                         }
                         is AudioTrack -> {
                             track.setEnabled(true)
+                            track.setVolume(1.0)
                         }
                         else -> {}
                     }
@@ -231,12 +237,14 @@ class WebRtcSessionManager(
     // --- Audio and Video Tracks Setup ---
 
     fun startLocalMedia(enableVideo: Boolean) {
-        // Audio
+        // Audio constraints with echo cancellation, auto gain, and noise suppression
         val audioConstraints = MediaConstraints().apply {
-            optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-            optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-            optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-            optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            optional.add(MediaConstraints.KeyValuePair("googTypingNoiseDetection", "true"))
+            optional.add(MediaConstraints.KeyValuePair("googAudioMirroring", "false"))
         }
         audioSource = peerConnectionFactory?.createAudioSource(audioConstraints)
         localAudioTrack = peerConnectionFactory?.createAudioTrack("ARDAMSa0", audioSource)
@@ -261,12 +269,27 @@ class WebRtcSessionManager(
                     surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
                     videoSource = peerConnectionFactory?.createVideoSource(cameraCapturer!!.isScreencast)
                     cameraCapturer?.initialize(surfaceTextureHelper, context, videoSource?.capturerObserver)
-                    // Safe universal resolution: 640x480@30fps
-                    try {
-                        cameraCapturer?.startCapture(640, 480, 30)
-                    } catch (_: Exception) {
+                    
+                    // High-quality tiered resolution fallback (HD 720p down to safe VGA)
+                    val targetTiers = listOf(
+                        Triple(1280, 720, 30),
+                        Triple(960, 540, 30),
+                        Triple(640, 480, 30),
+                        Triple(480, 360, 30),
+                        Triple(320, 240, 15)
+                    )
+                    var captureStarted = false
+                    for (tier in targetTiers) {
                         try {
-                            cameraCapturer?.startCapture(320, 240, 15)
+                            cameraCapturer?.startCapture(tier.first, tier.second, tier.third)
+                            android.util.Log.d("WebRtcManager", "Camera capture active at ${tier.first}x${tier.second}@${tier.third}fps")
+                            captureStarted = true
+                            break
+                        } catch (_: Exception) {}
+                    }
+                    if (!captureStarted) {
+                        try {
+                            cameraCapturer?.startCapture(640, 480, 30)
                         } catch (_: Exception) {}
                     }
 
@@ -400,22 +423,97 @@ class WebRtcSessionManager(
         cameraCapturer?.switchCamera(null)
     }
 
+    fun optimizeVideoQuality() {
+        try {
+            peerConnection?.senders?.forEach { sender ->
+                if (sender.track() is VideoTrack) {
+                    val params = sender.parameters
+                    if (params != null && params.encodings.isNotEmpty()) {
+                        for (encoding in params.encodings) {
+                            encoding.minBitrateBps = 400_000
+                            encoding.maxBitrateBps = 2_500_000
+                            encoding.maxFramerate = 30
+                        }
+                        sender.parameters = params
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("WebRtcManager", "Could not set video sender bitrate parameters", e)
+        }
+    }
+
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    @Suppress("DEPRECATION")
+    fun applySpeakerphoneRouting(enableSpeaker: Boolean) {
+        try {
+            _isSpeakerphoneOn.value = enableSpeaker
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (enableSpeaker) {
+                    val speakerDevice = audioManager.availableCommunicationDevices.firstOrNull {
+                        it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                    }
+                    if (speakerDevice != null) {
+                        audioManager.setCommunicationDevice(speakerDevice)
+                    } else {
+                        audioManager.isSpeakerphoneOn = true
+                    }
+                } else {
+                    val earpieceDevice = audioManager.availableCommunicationDevices.firstOrNull {
+                        it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    }
+                    if (earpieceDevice != null) {
+                        audioManager.setCommunicationDevice(earpieceDevice)
+                    } else {
+                        audioManager.clearCommunicationDevice()
+                        audioManager.isSpeakerphoneOn = false
+                    }
+                }
+            } else {
+                audioManager.isSpeakerphoneOn = enableSpeaker
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WebRtcManager", "Error applying speakerphone routing", e)
+        }
+    }
+
     @Suppress("DEPRECATION")
     fun toggleSpeakerphone(): Boolean {
         val newSpeaker = !_isSpeakerphoneOn.value
-        audioManager.isSpeakerphoneOn = newSpeaker
-        _isSpeakerphoneOn.value = newSpeaker
+        applySpeakerphoneRouting(newSpeaker)
         return newSpeaker
     }
 
     @Suppress("DEPRECATION")
     private fun configureAudioRouting(isVideo: Boolean) {
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val playbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { /* maintain audio focus */ }
+                    .build()
+                audioFocusRequest = focusReq
+                audioManager.requestAudioFocus(focusReq)
+            } else {
+                audioManager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.isMicrophoneMute = false
-            audioManager.isSpeakerphoneOn = isVideo
-            _isSpeakerphoneOn.value = isVideo
-        } catch (_: Exception) {}
+            applySpeakerphoneRouting(isVideo)
+        } catch (e: Exception) {
+            android.util.Log.e("WebRtcManager", "Error configuring audio routing", e)
+        }
     }
 
     fun getLocalVideoTrack(): VideoTrack? = localVideoTrack
@@ -505,8 +603,19 @@ class WebRtcSessionManager(
     @Suppress("DEPRECATION")
     private fun cleanupMedia() {
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+                audioFocusRequest = null
+            } else {
+                audioManager.abandonAudioFocus(null)
+            }
             audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isMicrophoneMute = false
             audioManager.isSpeakerphoneOn = false
+            _isSpeakerphoneOn.value = false
 
             pendingRemoteSdpOffer = null
             isWaitingForRemoteOfferToAnswer = false

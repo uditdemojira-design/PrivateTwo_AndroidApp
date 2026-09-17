@@ -1,6 +1,13 @@
 package org.privatetwo.app.feature.calls
 
+import android.app.Activity
+import android.content.ContextWrapper
+import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,7 +19,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -33,9 +42,40 @@ fun CallScreen(
     val isAudioMuted by viewModel.isAudioMuted.collectAsState()
     val isVideoEnabled by viewModel.isVideoEnabled.collectAsState()
     val isSpeakerphoneOn by viewModel.isSpeakerphoneOn.collectAsState()
+    val isEnhanceModeEnabled by viewModel.isEnhanceModeEnabled.collectAsState()
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val localVideoTrack by viewModel.localVideoTrack.collectAsState()
     val callDurationSeconds by viewModel.callDurationSeconds.collectAsState()
+
+    val context = LocalContext.current
+    val activity = remember(context) {
+        generateSequence(context) { if (it is ContextWrapper) it.baseContext else null }
+            .filterIsInstance<Activity>()
+            .firstOrNull()
+    }
+
+    // Hardware Max Brightness Override & Keep Screen On for dark environments
+    DisposableEffect(isEnhanceModeEnabled, activity) {
+        val window = activity?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (isEnhanceModeEnabled && window != null) {
+            val params = window.attributes
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL // 100% max brightness override
+            window.attributes = params
+        } else if (window != null) {
+            val params = window.attributes
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE // restore system brightness
+            window.attributes = params
+        }
+        onDispose {
+            val params = window?.attributes
+            if (params != null) {
+                params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = params
+            }
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
 
     LaunchedEffect(callState) {
         if (callState == WebRtcCallState.ENDED || callState == WebRtcCallState.IDLE) {
@@ -69,6 +109,15 @@ fun CallScreen(
                         .size(110.dp, 160.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.DarkGray)
+                        .then(
+                            if (isEnhanceModeEnabled) {
+                                Modifier.border(
+                                    width = 2.dp,
+                                    color = Color(0xFFFFD54F),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                            } else Modifier
+                        )
                 ) {
                     WebRtcVideoView(
                         videoTrack = localVideoTrack!!,
@@ -169,6 +218,25 @@ fun CallScreen(
             }
         }
 
+        // WhatsApp-style Front Screen Fill-Light Illumination Ring in Dark Environments
+        if (isVideoCall && isEnhanceModeEnabled) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(
+                        width = 16.dp,
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color(0xFFFFFAED).copy(alpha = 0.5f),
+                                Color(0xFFFFFBE8).copy(alpha = 0.9f)
+                            )
+                        ),
+                        shape = androidx.compose.ui.graphics.RectangleShape
+                    )
+            )
+        }
+
         if (callState == WebRtcCallState.CONNECTED && isVideoCall) {
             Surface(
                 color = Color.Black.copy(alpha = 0.6f),
@@ -186,8 +254,44 @@ fun CallScreen(
             }
         }
 
+        // Floating pill indicating WhatsApp-style low-light enhancement active
+        AnimatedVisibility(
+            visible = isEnhanceModeEnabled && isVideoCall,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 84.dp)
+        ) {
+            Surface(
+                color = Color(0xFFFFB300).copy(alpha = 0.92f),
+                shape = RoundedCornerShape(20.dp),
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Low-Light Boost ON (Max Brightness)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
+
+        // Bottom Call Controls Bar
         Surface(
-            color = Color.Black.copy(alpha = 0.7f),
+            color = Color.Black.copy(alpha = 0.75f),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -196,7 +300,7 @@ fun CallScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 24.dp, horizontal = 16.dp),
+                    .padding(vertical = 20.dp, horizontal = 12.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -205,7 +309,7 @@ fun CallScreen(
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = if (isAudioMuted) Color.Red else Color.DarkGray
                     ),
-                    modifier = Modifier.size(54.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector = if (isAudioMuted) Icons.Default.MicOff else Icons.Default.Mic,
@@ -219,7 +323,7 @@ fun CallScreen(
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = if (isSpeakerphoneOn) MaterialTheme.colorScheme.primary else Color.DarkGray
                     ),
-                    modifier = Modifier.size(54.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector = if (isSpeakerphoneOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeDown,
@@ -234,7 +338,7 @@ fun CallScreen(
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = if (!isVideoEnabled) Color.Red else Color.DarkGray
                         ),
-                        modifier = Modifier.size(54.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = if (isVideoEnabled) Icons.Default.Videocam else Icons.Default.VideocamOff,
@@ -248,7 +352,7 @@ fun CallScreen(
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = Color.DarkGray
                         ),
-                        modifier = Modifier.size(54.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.FlipCameraAndroid,
@@ -256,18 +360,33 @@ fun CallScreen(
                             tint = Color.White
                         )
                     }
+
+                    // WhatsApp-style Low Light & Max Brightness Boost toggle
+                    IconButton(
+                        onClick = { viewModel.toggleEnhanceMode() },
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = if (isEnhanceModeEnabled) Color(0xFFFFB300) else Color.DarkGray
+                        ),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isEnhanceModeEnabled) Icons.Default.AutoAwesome else Icons.Default.Lightbulb,
+                            contentDescription = "Enhance & Max Brightness",
+                            tint = if (isEnhanceModeEnabled) Color.Black else Color.White
+                        )
+                    }
                 }
 
                 IconButton(
                     onClick = { viewModel.endCall() },
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFD32F2F)),
-                    modifier = Modifier.size(60.dp)
+                    modifier = Modifier.size(54.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.CallEnd,
                         contentDescription = "End Call",
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }

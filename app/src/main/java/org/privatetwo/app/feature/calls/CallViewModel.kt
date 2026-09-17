@@ -27,6 +27,9 @@ class CallViewModel(
     val remoteVideoTrack: StateFlow<VideoTrack?> = _remoteVideoTrack.asStateFlow()
     val localVideoTrack: StateFlow<VideoTrack?> = webRtcSessionManager.localVideoTrackState
 
+    private val _isEnhanceModeEnabled = MutableStateFlow(false)
+    val isEnhanceModeEnabled: StateFlow<Boolean> = _isEnhanceModeEnabled.asStateFlow()
+
     private val _callDurationSeconds = MutableStateFlow(0L)
     val callDurationSeconds: StateFlow<Long> = _callDurationSeconds.asStateFlow()
 
@@ -40,10 +43,14 @@ class CallViewModel(
         viewModelScope.launch {
             webRtcSessionManager.callState.collect { state ->
                 when (state) {
-                    WebRtcCallState.CONNECTED -> startDurationTimer()
+                    WebRtcCallState.CONNECTED -> {
+                        startDurationTimer()
+                        webRtcSessionManager.optimizeVideoQuality()
+                    }
                     WebRtcCallState.IDLE,
                     WebRtcCallState.ENDED -> {
                         _remoteVideoTrack.value = null
+                        _isEnhanceModeEnabled.value = false
                         stopDurationTimer()
                     }
                     else -> Unit
@@ -98,6 +105,12 @@ class CallViewModel(
 
     fun toggleSpeaker() {
         webRtcSessionManager.toggleSpeakerphone()
+    }
+
+    fun toggleEnhanceMode(): Boolean {
+        val newState = !_isEnhanceModeEnabled.value
+        _isEnhanceModeEnabled.value = newState
+        return newState
     }
 
     fun getLocalVideoTrack(): VideoTrack? = webRtcSessionManager.getLocalVideoTrack()
