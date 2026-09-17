@@ -22,6 +22,13 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val signalingState: StateFlow<SignalingConnectionState> = signalingClient.connectionState
+    val isPeerTyping: StateFlow<Boolean> = chatRepository.isPeerTyping
+
+    fun onInputTextChanged(text: String) {
+        viewModelScope.launch {
+            chatRepository.sendTypingIndicator(text.isNotBlank())
+        }
+    }
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return

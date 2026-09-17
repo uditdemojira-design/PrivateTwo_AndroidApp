@@ -73,7 +73,7 @@ class PrivateTwoApp : Application() {
             BuildConfig.DEFAULT_SIGNALING_URL // ws://10.0.2.2:8088
         } else {
             // Cloudflare Tunnel URL allowing devices on different Wi-Fi / mobile data to connect
-            "wss://potato-broader-breach-promote.trycloudflare.com"
+            "wss://forever-steel-played-ranging.trycloudflare.com"
         }
     }
 

@@ -220,7 +220,7 @@ fun SignalingStatusCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SuggestionChip(
-                            onClick = { editUrl = "wss://potato-broader-breach-promote.trycloudflare.com" },
+                            onClick = { editUrl = "wss://forever-steel-played-ranging.trycloudflare.com" },
                             label = { Text("Cloudflare Tunnel") }
                         )
                         SuggestionChip(

@@ -6,8 +6,12 @@ import android.graphics.BitmapFactory
 import java.io.FileOutputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +55,11 @@ class ChatRepository(
 ) {
     private val replayValidator = ReplayProtectionValidator()
     private var sequenceCounter: Long = 1
+
+    private val _isPeerTyping = MutableStateFlow(false)
+    val isPeerTyping: StateFlow<Boolean> = _isPeerTyping.asStateFlow()
+    private var typingResetJob: Job? = null
+    private var lastTypingSentTime: Long = 0L
 
     init {
         webRtcSessionManager.onDataChannelMessage = { bytes ->
@@ -133,6 +142,9 @@ class ChatRepository(
         }
 
         database.messageDao().updateDeliveryStatus(messageId, DeliveryStatus.SENT)
+        try {
+            sendTypingIndicator(false)
+        } catch (ignored: Exception) {}
         messageId
     }
 
@@ -269,6 +281,34 @@ class ChatRepository(
         database.transferDao().deleteAllTransfers()
     }
 
+    suspend fun sendTypingIndicator(isTyping: Boolean) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (isTyping && now - lastTypingSentTime < 2000L) {
+            return@withContext
+        }
+        lastTypingSentTime = now
+        try {
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@withContext
+            val outboundKey = secureStorage.getOutboundSessionKey() ?: return@withContext
+
+            val payload = isTyping.toString().toByteArray(Charsets.UTF_8)
+            val envelope = MessageEnvelope.pack(
+                senderDeviceId = localDeviceId,
+                recipientDeviceId = peerDeviceId,
+                sequenceNumber = sequenceCounter++,
+                messageType = MessageType.TYPING_INDICATOR,
+                plaintext = payload,
+                encryptionKey = outboundKey
+            )
+            val json = envelope.toJson()
+            val sentViaP2p = webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))
+            if (!sentViaP2p) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+        } catch (ignored: Exception) {}
+    }
+
     private suspend fun handleIncomingRawEnvelope(jsonStr: String) = withContext(Dispatchers.IO) {
         try {
             val envelope = MessageEnvelope.fromJson(jsonStr)
@@ -290,7 +330,21 @@ class ChatRepository(
             )
 
             when (envelope.messageType) {
+                MessageType.TYPING_INDICATOR -> {
+                    val isTyping = String(decryptedBytes, Charsets.UTF_8).toBoolean()
+                    _isPeerTyping.value = isTyping
+                    typingResetJob?.cancel()
+                    if (isTyping) {
+                        typingResetJob = scope.launch {
+                            delay(3500)
+                            _isPeerTyping.value = false
+                        }
+                    }
+                }
                 MessageType.TEXT -> {
+                    _isPeerTyping.value = false
+                    typingResetJob?.cancel()
+
                     val localKey = getOrCreateDatabaseKey()
                     val localEncrypted = CryptoEngine.encrypt(localKey, decryptedBytes)
                     val iv = localEncrypted.copyOfRange(0, 12)

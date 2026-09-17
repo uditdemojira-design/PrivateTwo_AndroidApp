@@ -15,7 +15,8 @@ enum class MessageType {
     FILE_HEADER,
     FILE_CHUNK,
     DELIVERY_RECEIPT,
-    SIGNALING
+    SIGNALING,
+    TYPING_INDICATOR
 }
 
 /**
