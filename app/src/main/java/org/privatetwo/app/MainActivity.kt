@@ -1,6 +1,7 @@
 package org.privatetwo.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import org.privatetwo.app.core.security.BiometricAuthHelper
+import org.privatetwo.app.core.signaling.SignalingKeepAliveService
 import org.privatetwo.app.core.webrtc.WebRtcCallState
 import org.privatetwo.app.feature.calls.CallScreen
 import org.privatetwo.app.feature.calls.CallViewModel
@@ -38,6 +40,7 @@ import org.privatetwo.app.feature.settings.PrivacySettingsScreen
 class MainActivity : FragmentActivity() {
 
     private val app by lazy { application as PrivateTwoApp }
+    private val pendingNavRoute = mutableStateOf<String?>(null)
 
     private val startupPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -74,6 +77,10 @@ class MainActivity : FragmentActivity() {
             startupPermissionLauncher.launch(missing.toTypedArray())
         }
 
+        intent?.getStringExtra("navigate_to")?.let {
+            pendingNavRoute.value = it
+        }
+
         if (app.secureStorage.isBiometricLockEnabled) {
             BiometricAuthHelper.showBiometricPrompt(
                 activity = this,
@@ -82,6 +89,14 @@ class MainActivity : FragmentActivity() {
             )
         } else {
             setupContent()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("navigate_to")?.let {
+            pendingNavRoute.value = it
         }
     }
 
@@ -108,6 +123,18 @@ class MainActivity : FragmentActivity() {
                     val startDestination = if (isPaired) "main" else "pairing"
 
                     val callState by callViewModel.callState.collectAsState()
+
+                    val navRoute by pendingNavRoute
+                    LaunchedEffect(navRoute) {
+                        navRoute?.let { target ->
+                            if (isPaired) {
+                                navController.navigate(target) {
+                                    launchSingleTop = true
+                                }
+                            }
+                            pendingNavRoute.value = null
+                        }
+                    }
 
                     LaunchedEffect(callState) {
                         if (callState == WebRtcCallState.INCOMING_CALL) {
@@ -148,6 +175,7 @@ class MainActivity : FragmentActivity() {
                             PairingScreen(
                                 viewModel = pairingViewModel,
                                 onPairingCompleted = {
+                                    SignalingKeepAliveService.start(this@MainActivity)
                                     navController.navigate("main") {
                                         popUpTo("pairing") { inclusive = true }
                                     }
@@ -178,6 +206,7 @@ class MainActivity : FragmentActivity() {
                                     navController.navigate("settings")
                                 },
                                 onUnpairAndPair = {
+                                    SignalingKeepAliveService.stop(this@MainActivity)
                                     pairingViewModel.unpair()
                                     navController.navigate("pairing") {
                                         popUpTo(0) { inclusive = true }
@@ -190,6 +219,7 @@ class MainActivity : FragmentActivity() {
                             ChatScreen(
                                 viewModel = chatViewModel,
                                 partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                secureStorage = app.secureStorage,
                                 onNavigateBack = {
                                     navController.popBackStack()
                                 },
@@ -270,6 +300,7 @@ class MainActivity : FragmentActivity() {
                                 secureStorage = app.secureStorage,
                                 onNavigateBack = { navController.popBackStack() },
                                 onUnpaired = {
+                                    SignalingKeepAliveService.stop(this@MainActivity)
                                     pairingViewModel.unpair()
                                     navController.navigate("pairing") {
                                         popUpTo(0) { inclusive = true }

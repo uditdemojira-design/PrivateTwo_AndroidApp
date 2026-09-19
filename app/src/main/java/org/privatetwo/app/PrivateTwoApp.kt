@@ -8,6 +8,7 @@ import android.os.Build
 import org.privatetwo.app.core.database.PrivateTwoDatabase
 import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingClient
+import org.privatetwo.app.core.signaling.SignalingKeepAliveService
 import org.privatetwo.app.core.webrtc.WebRtcSessionManager
 import org.privatetwo.app.feature.chat.ChatRepository
 import org.privatetwo.app.feature.files.FileTransferManager
@@ -58,6 +59,10 @@ class PrivateTwoApp : Application() {
         }
 
         createNotificationChannels()
+
+        if (secureStorage.isPaired()) {
+            SignalingKeepAliveService.start(this)
+        }
     }
 
     private fun getDefaultSignalingUrl(): String {
@@ -88,13 +93,24 @@ class PrivateTwoApp : Application() {
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
 
+            val serviceChannel = NotificationChannel(
+                CHANNEL_SERVICE_ID,
+                "Connection Keep-Alive",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Maintains encrypted background connection for incoming messages and calls"
+                setShowBadge(false)
+            }
+
             notificationManager.createNotificationChannel(msgChannel)
             notificationManager.createNotificationChannel(callChannel)
+            notificationManager.createNotificationChannel(serviceChannel)
         }
     }
 
     companion object {
         const val CHANNEL_MESSAGES_ID = "privatetwo_messages"
         const val CHANNEL_CALLS_ID = "privatetwo_calls"
+        const val CHANNEL_SERVICE_ID = "privatetwo_service"
     }
 }

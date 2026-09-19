@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.privatetwo.app.core.webrtc.WebRtcCallState
 import org.privatetwo.app.core.webrtc.WebRtcSessionManager
+import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
+import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -47,6 +49,9 @@ fun CallScreen(
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val localVideoTrack by viewModel.localVideoTrack.collectAsState()
     val callDurationSeconds by viewModel.callDurationSeconds.collectAsState()
+
+    var isManualBlackoutActive by remember { mutableStateOf(false) }
+    val isTiltActive by rememberAntiPeepTiltState(enabled = true)
 
     val context = LocalContext.current
     val activity = remember(context) {
@@ -88,11 +93,16 @@ fun CallScreen(
     val seconds = callDurationSeconds % 60
     val durationFormatted = "%02d:%02d".format(minutes, seconds)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
+    AntiPeepShieldOverlay(
+        isTiltBlackoutActive = isTiltActive,
+        isManualBlackoutActive = isManualBlackoutActive,
+        onDismissManualBlackout = { isManualBlackoutActive = false }
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
         if (isVideoCall && remoteVideoTrack != null) {
             // Connected remote video full screen
             WebRtcVideoView(
@@ -379,6 +389,20 @@ fun CallScreen(
                 }
 
                 IconButton(
+                    onClick = { isManualBlackoutActive = true },
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = Color.DarkGray
+                    ),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = "Privacy Shield",
+                        tint = Color.White
+                    )
+                }
+
+                IconButton(
                     onClick = { viewModel.endCall() },
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFD32F2F)),
                     modifier = Modifier.size(54.dp)
@@ -392,6 +416,7 @@ fun CallScreen(
                 }
             }
         }
+    }
     }
 }
 

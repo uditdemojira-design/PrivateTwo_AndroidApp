@@ -33,6 +33,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.privatetwo.app.core.database.DeliveryStatus
 import org.privatetwo.app.core.signaling.SignalingConnectionState
+import org.privatetwo.app.core.notification.NotificationHelper
+import org.privatetwo.app.core.security.SecureStorage
+import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
+import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -51,6 +55,7 @@ private val WhatsAppTypingGreen = Color(0xFF25D366)
 fun ChatScreen(
     viewModel: ChatViewModel,
     partnerDisplayName: String? = null,
+    secureStorage: SecureStorage? = null,
     onNavigateBack: () -> Unit,
     onStartAudioCall: () -> Unit,
     onStartVideoCall: () -> Unit,
@@ -59,6 +64,19 @@ fun ChatScreen(
     BackHandler(onBack = onNavigateBack)
 
     val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        NotificationHelper.isChatVisible.set(true)
+        NotificationHelper.clearNotifications(context)
+        onDispose {
+            NotificationHelper.isChatVisible.set(false)
+        }
+    }
+
+    var isManualBlackoutActive by remember { mutableStateOf(false) }
+    var isAntiPeepTiltEnabled by remember { mutableStateOf(secureStorage?.isAntiPeepTiltEnabled ?: true) }
+    val isTiltActive by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
+
     val messages by viewModel.messages.collectAsState()
     val signalingState by viewModel.signalingState.collectAsState()
     val isPeerTyping by viewModel.isPeerTyping.collectAsState()
@@ -99,120 +117,156 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to Home",
-                            tint = Color.White
-                        )
-                    }
-                },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFF1E2B33),
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = WhatsAppTypingGreen,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        Column {
-                            Text(
-                                text = partnerDisplayName ?: "Private Partner",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
+    AntiPeepShieldOverlay(
+        isTiltBlackoutActive = isTiltActive,
+        isManualBlackoutActive = isManualBlackoutActive,
+        onDismissManualBlackout = { isManualBlackoutActive = false }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to Home",
+                                tint = Color.White
                             )
-
-                            if (isPeerTyping) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text(
-                                        text = "typing...",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = WhatsAppTypingGreen
+                        }
+                    },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF1E2B33),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = WhatsAppTypingGreen,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
-                            } else {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    val (dotColor, statusText) = when (signalingState) {
-                                        SignalingConnectionState.CONNECTED -> Pair(WhatsAppTypingGreen, "Connected")
-                                        SignalingConnectionState.CONNECTING -> Pair(Color(0xFFF57F17), "Connecting…")
-                                        SignalingConnectionState.DISCONNECTED -> Pair(Color.Gray, "Offline")
+                            }
+
+                            Column {
+                                Text(
+                                    text = partnerDisplayName ?: "Private Partner",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+
+                                if (isPeerTyping) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "typing...",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = WhatsAppTypingGreen
+                                        )
                                     }
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = dotColor,
-                                        modifier = Modifier.size(7.dp)
-                                    ) {}
-                                    Text(
-                                        text = statusText,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = WhatsAppTime
-                                    )
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        val (dotColor, statusText) = when (signalingState) {
+                                            SignalingConnectionState.CONNECTED -> Pair(WhatsAppTypingGreen, "Connected")
+                                            SignalingConnectionState.CONNECTING -> Pair(Color(0xFFF57F17), "Connecting…")
+                                            SignalingConnectionState.DISCONNECTED -> Pair(Color.Gray, "Offline")
+                                        }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = dotColor,
+                                            modifier = Modifier.size(7.dp)
+                                        ) {}
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = WhatsAppTime
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onStartAudioCall) {
-                        Icon(Icons.Default.Phone, contentDescription = "Audio Call", tint = Color.White)
-                    }
-                    IconButton(onClick = onStartVideoCall) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = Color.White)
-                    }
-                    IconButton(onClick = { showMenu = !showMenu }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
-                    }
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Privacy & Security") },
-                            leadingIcon = { Icon(Icons.Default.Security, contentDescription = null) },
-                            onClick = {
-                                showMenu = false
-                                onOpenSettings()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Clear Conversation") },
-                            leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null) },
-                            onClick = {
-                                showMenu = false
-                                showClearDialog = true
-                            }
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1F2C34)
+                    },
+                    actions = {
+                        IconButton(onClick = { isManualBlackoutActive = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Hide Screen (Blackout)",
+                                tint = if (isAntiPeepTiltEnabled) WhatsAppTypingGreen else Color.White
+                            )
+                        }
+                        IconButton(onClick = onStartAudioCall) {
+                            Icon(Icons.Default.Phone, contentDescription = "Audio Call", tint = Color.White)
+                        }
+                        IconButton(onClick = onStartVideoCall) {
+                            Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = Color.White)
+                        }
+                        IconButton(onClick = { showMenu = !showMenu }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(if (isAntiPeepTiltEnabled) "Anti-Peep Tilt: ON" else "Anti-Peep Tilt: OFF") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (isAntiPeepTiltEnabled) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        tint = if (isAntiPeepTiltEnabled) WhatsAppTypingGreen else Color.Unspecified
+                                    )
+                                },
+                                onClick = {
+                                    val newState = !isAntiPeepTiltEnabled
+                                    isAntiPeepTiltEnabled = newState
+                                    secureStorage?.isAntiPeepTiltEnabled = newState
+                                    showMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Instant Blackout Screen") },
+                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    isManualBlackoutActive = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Privacy & Security") },
+                                leadingIcon = { Icon(Icons.Default.Security, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onOpenSettings()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Clear Conversation") },
+                                leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    showClearDialog = true
+                                }
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF1F2C34)
+                    )
                 )
-            )
-        },
+            },
         bottomBar = {
             Column(
                 modifier = Modifier
@@ -447,6 +501,7 @@ fun ChatScreen(
                 }
             )
         }
+    }
     }
 }
 

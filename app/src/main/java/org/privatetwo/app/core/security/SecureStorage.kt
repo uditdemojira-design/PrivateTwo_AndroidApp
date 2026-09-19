@@ -59,6 +59,9 @@ class SecureStorage(private val context: Context) {
         private const val KEY_PARTNER_DISPLAY_NAME = "partner_display_name"
         private const val KEY_HAS_PROMPTED_NAME = "has_prompted_name"
 
+        private const val KEY_ANTI_PEEP_TILT = "anti_peep_tilt_enabled"
+        private const val KEY_ANTI_PEEP_SHADE = "anti_peep_shade_enabled"
+
         // Ephemeral session keys cached in memory
         @Volatile
         var activeInboundSessionKey: ByteArray? = null
@@ -284,6 +287,14 @@ class SecureStorage(private val context: Context) {
     var isStealthNotificationsEnabled: Boolean
         get() = prefs.getBoolean(KEY_STEALTH_NOTIFICATIONS, true) // Stealth "New private message" by default
         set(value) = prefs.edit().putBoolean(KEY_STEALTH_NOTIFICATIONS, value).apply()
+
+    var isAntiPeepTiltEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ANTI_PEEP_TILT, true) // Enabled by default for anti-peeping
+        set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_TILT, value).apply()
+
+    var isAntiPeepShadeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ANTI_PEEP_SHADE, false)
+        set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_SHADE, value).apply()
 
     fun getSignalingUrl(defaultUrl: String): String {
         val saved = prefs.getString("signaling_server_url", null)

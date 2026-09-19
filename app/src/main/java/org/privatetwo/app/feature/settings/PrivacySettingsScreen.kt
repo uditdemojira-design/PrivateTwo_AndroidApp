@@ -99,6 +99,28 @@ fun PrivacySettingsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
+                text = "ANTI-PEEP PRIVACY SHIELD",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+
+            var antiPeepTilt by remember { mutableStateOf(secureStorage.isAntiPeepTiltEnabled) }
+
+            SettingSwitchItem(
+                icon = Icons.Default.Security,
+                title = "Side-Angle Tilt Auto-Blackout",
+                subtitle = "Instantly turns screen pitch black if phone is tilted sideways (>26°), preventing bystanders and shoulder-surfers from reading.",
+                checked = antiPeepTilt,
+                onCheckedChange = {
+                    antiPeepTilt = it
+                    secureStorage.isAntiPeepTiltEnabled = it
+                }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 text = "CHAT PERSONALIZATION",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,

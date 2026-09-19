@@ -27,6 +27,7 @@ import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingEvent
 import org.privatetwo.app.core.webrtc.WebRtcSessionManager
+import org.privatetwo.app.core.notification.NotificationHelper
 import org.privatetwo.app.feature.files.FileTransferManager
 import java.io.File
 import java.util.Base64
@@ -364,8 +365,15 @@ class ChatRepository(
                         isIncoming = true
                     )
                     database.messageDao().insertMessage(entity)
-
                     sendDeliveryReceipt(envelope.messageId)
+
+                    val textPreview = String(decryptedBytes, Charsets.UTF_8)
+                    NotificationHelper.showIncomingMessageNotification(
+                        context = context,
+                        secureStorage = secureStorage,
+                        messageText = textPreview,
+                        messageType = "TEXT"
+                    )
                 }
                 MessageType.DELIVERY_RECEIPT -> {
                     val receiptId = String(decryptedBytes, Charsets.UTF_8)
@@ -400,6 +408,13 @@ class ChatRepository(
                         )
                         database.messageDao().insertMessage(entity)
                         sendDeliveryReceipt(completed.transferId)
+
+                        NotificationHelper.showIncomingMessageNotification(
+                            context = context,
+                            secureStorage = secureStorage,
+                            messageText = null,
+                            messageType = if (completed.isPhoto) "PHOTO" else "FILE"
+                        )
                     }
                 }
                 else -> Unit
