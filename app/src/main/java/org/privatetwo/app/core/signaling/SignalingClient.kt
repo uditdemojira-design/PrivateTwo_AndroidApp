@@ -74,7 +74,7 @@ class SignalingClient(
 
     companion object {
         fun sanitizeServerUrl(rawUrl: String): String {
-            var url = rawUrl.trim()
+            var url = rawUrl.trim().removeSuffix("/")
             if (url.startsWith("https://", ignoreCase = true)) {
                 url = "wss://" + url.substring(8)
             } else if (url.startsWith("http://", ignoreCase = true)) {
@@ -89,7 +89,7 @@ class SignalingClient(
             if (url.startsWith("ws://", ignoreCase = true) && (url.contains(".trycloudflare.com") || url.contains(".onrender.com") || url.contains(".loca.lt"))) {
                 url = "wss://" + url.substring(5)
             }
-            return url
+            return url.trim().removeSuffix("/")
         }
     }
 

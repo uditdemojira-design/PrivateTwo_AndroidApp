@@ -220,12 +220,12 @@ fun SignalingStatusCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SuggestionChip(
-                            onClick = { editUrl = "ws://192.168.1.5:8088" },
-                            label = { Text("🏠 Same Wi-Fi (PC)") }
+                            onClick = { editUrl = "wss://privatetwo-androidapp.onrender.com" },
+                            label = { Text("🌐 Render Cloud (Default)") }
                         )
                         SuggestionChip(
-                            onClick = { editUrl = "wss://hydrocodone-football-divide-politics.trycloudflare.com" },
-                            label = { Text("🌐 Cloudflare Tunnel") }
+                            onClick = { editUrl = "ws://192.168.1.5:8088" },
+                            label = { Text("🏠 Same Wi-Fi (PC)") }
                         )
                     }
                 }
@@ -275,17 +275,17 @@ fun UnpairedView(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val isWifi = serverUrl.contains("192.168.") || serverUrl.contains("10.0.2.2")
+            val isRender = serverUrl.contains("privatetwo-androidapp.onrender.com")
             FilterChip(
-                selected = isWifi,
-                onClick = { onUpdateServerUrl("ws://192.168.1.5:8088") },
-                label = { Text("🏠 Same Wi-Fi", fontSize = 12.sp) },
+                selected = isRender,
+                onClick = { onUpdateServerUrl("wss://privatetwo-androidapp.onrender.com") },
+                label = { Text("🌐 Render Cloud", fontSize = 12.sp) },
                 modifier = Modifier.weight(1f)
             )
             FilterChip(
-                selected = !isWifi,
-                onClick = { onUpdateServerUrl("wss://hydrocodone-football-divide-politics.trycloudflare.com") },
-                label = { Text("🌐 Online Tunnel", fontSize = 12.sp) },
+                selected = !isRender,
+                onClick = { onUpdateServerUrl("ws://192.168.1.5:8088") },
+                label = { Text("🏠 Local Wi-Fi", fontSize = 12.sp) },
                 modifier = Modifier.weight(1f)
             )
         }

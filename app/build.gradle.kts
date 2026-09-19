@@ -35,7 +35,7 @@ android {
         val turnServer = localProperties.getProperty("privatetwo.turn.server", "")
         val turnUser = localProperties.getProperty("privatetwo.turn.username", "")
         val turnPass = localProperties.getProperty("privatetwo.turn.credential", "")
-        val signalingUrl = localProperties.getProperty("privatetwo.signaling.url", "ws://10.0.2.2:8088")
+        val signalingUrl = localProperties.getProperty("privatetwo.signaling.url", "wss://privatetwo-androidapp.onrender.com")
 
         buildConfigField("String", "STUN_SERVER", "\"$stunServer\"")
         buildConfigField("String", "TURN_SERVER", "\"$turnServer\"")
