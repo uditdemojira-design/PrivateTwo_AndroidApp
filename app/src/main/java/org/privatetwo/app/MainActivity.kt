@@ -277,6 +277,7 @@ class MainActivity : FragmentActivity() {
                                     navController.navigate("main") {
                                         popUpTo("pairing") { inclusive = true }
                                     }
+                                    navController.navigate("chat")
                                 }
                             )
                         }
