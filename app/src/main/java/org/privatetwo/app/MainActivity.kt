@@ -37,6 +37,14 @@ import org.privatetwo.app.feature.pairing.PairingScreen
 import org.privatetwo.app.feature.pairing.PairingViewModel
 import org.privatetwo.app.feature.settings.PrivacySettingsScreen
 
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.*
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import org.privatetwo.app.core.signaling.SignalingConnectionState
+
 class MainActivity : FragmentActivity() {
 
     private val app by lazy { application as PrivateTwoApp }
@@ -46,15 +54,25 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) {}
 
-    private val pairingViewModel by viewModels<PairingViewModel> {
+    private var pendingCallAction: (() -> Unit)? = null
+    private val callPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (grants.values.all { it }) {
+            pendingCallAction?.invoke()
+        }
+        pendingCallAction = null
+    }
+
+    private val pairingViewModel: PairingViewModel by viewModels {
         PairingViewModel.Factory(app.pairingManager)
     }
 
-    private val chatViewModel by viewModels<ChatViewModel> {
+    private val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.Factory(app.chatRepository, app.fileTransferManager, app.signalingClient)
     }
 
-    private val callViewModel by viewModels<CallViewModel> {
+    private val callViewModel: CallViewModel by viewModels {
         CallViewModel.Factory(app.webRtcSessionManager)
     }
 
@@ -92,6 +110,15 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Auto-reconnect signaling immediately if disconnected when app returns to foreground
+        if (app.signalingClient.connectionState.value == SignalingConnectionState.DISCONNECTED) {
+            app.signalingClient.resetReconnectBackoff()
+            app.signalingClient.connect()
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -121,6 +148,77 @@ class MainActivity : FragmentActivity() {
                     val navController = rememberNavController()
                     val isPaired = remember { app.secureStorage.isPaired() }
                     val startDestination = if (isPaired) "main" else "pairing"
+
+                    // One-time Name Setup Prompt at the root level (shown once on initial entry if name doesn't exist)
+                    var showNamePromptDialog by remember {
+                        mutableStateOf(app.secureStorage.getPartnerDisplayName().isNullOrBlank() && !app.secureStorage.hasPromptedName())
+                    }
+
+                    if (showNamePromptDialog) {
+                        var nameInput by remember { mutableStateOf("") }
+                        AlertDialog(
+                            onDismissRequest = {
+                                app.secureStorage.setHasPromptedName(true)
+                                showNamePromptDialog = false
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = {
+                                Text(
+                                    text = "Enter Your Name",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleLarge
+                                )
+                            },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(
+                                        text = "Enter a name to display inside chat & calls. Once saved, you will never be prompted again.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedTextField(
+                                        value = nameInput,
+                                        onValueChange = { nameInput = it },
+                                        label = { Text("Display Name") },
+                                        placeholder = { Text("e.g. Rahul, Priya") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        val trimmed = nameInput.trim()
+                                        if (trimmed.isNotBlank()) {
+                                            app.secureStorage.setPartnerDisplayName(trimmed)
+                                        }
+                                        app.secureStorage.setHasPromptedName(true)
+                                        showNamePromptDialog = false
+                                    }
+                                ) {
+                                    Text("Save Name")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(
+                                    onClick = {
+                                        app.secureStorage.setHasPromptedName(true)
+                                        showNamePromptDialog = false
+                                    }
+                                ) {
+                                    Text("Skip")
+                                }
+                            }
+                        )
+                    }
 
                     val callState by callViewModel.callState.collectAsState()
 
@@ -247,6 +345,7 @@ class MainActivity : FragmentActivity() {
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = false,
                                 partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                isAntiPeepTiltEnabled = app.secureStorage.isAntiPeepTiltEnabled,
                                 onCallEnded = {
                                     navController.popBackStack()
                                 }
@@ -259,6 +358,7 @@ class MainActivity : FragmentActivity() {
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = true,
                                 partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                isAntiPeepTiltEnabled = app.secureStorage.isAntiPeepTiltEnabled,
                                 onCallEnded = {
                                     navController.popBackStack()
                                 }

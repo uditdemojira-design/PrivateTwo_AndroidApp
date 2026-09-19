@@ -54,13 +54,14 @@ class SignalingClient(
 ) {
     private val okHttpClient = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS) // Keep alive for WebSocket
-        .pingInterval(20, TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
     private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
     private var shouldReconnect = true
+    private var reconnectAttempt = 0
     private val pendingMessages = mutableListOf<String>()
 
     private val _connectionState = MutableStateFlow(SignalingConnectionState.DISCONNECTED)
@@ -97,8 +98,14 @@ class SignalingClient(
         val sanitized = sanitizeServerUrl(newUrl)
         if (serverUrl == sanitized && _connectionState.value == SignalingConnectionState.CONNECTED) return
         serverUrl = sanitized
+        resetReconnectBackoff()
         disconnect()
         connect()
+    }
+
+    fun resetReconnectBackoff() {
+        reconnectAttempt = 0
+        reconnectJob?.cancel()
     }
 
     fun connect() {
@@ -113,6 +120,7 @@ class SignalingClient(
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     _connectionState.value = SignalingConnectionState.CONNECTED
+                    reconnectAttempt = 0
                     localDeviceId?.let { devId ->
                         val idMsg = JSONObject().put("type", "IDENTIFY").put("deviceId", devId)
                         webSocket.send(idMsg.toString())
@@ -175,7 +183,16 @@ class SignalingClient(
         if (!shouldReconnect) return
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
-            delay(3000)
+            // Exponential backoff to prevent battery drain: 2s -> 4s -> 8s -> 16s -> max 30s
+            val delayMs = when (reconnectAttempt) {
+                0 -> 2000L
+                1 -> 4000L
+                2 -> 8000L
+                3 -> 16000L
+                else -> 30000L
+            }
+            reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(10)
+            delay(delayMs)
             if (isActive && shouldReconnect) {
                 connect()
             }

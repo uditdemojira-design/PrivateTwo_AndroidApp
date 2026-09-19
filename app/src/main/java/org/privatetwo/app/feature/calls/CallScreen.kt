@@ -39,6 +39,7 @@ fun CallScreen(
     webRtcSessionManager: WebRtcSessionManager,
     isVideoCall: Boolean,
     partnerDisplayName: String? = null,
+    isAntiPeepTiltEnabled: Boolean = false,
     onCallEnded: () -> Unit
 ) {
     val callState by viewModel.callState.collectAsState()
@@ -51,7 +52,7 @@ fun CallScreen(
     val callDurationSeconds by viewModel.callDurationSeconds.collectAsState()
 
     var isManualBlackoutActive by remember { mutableStateOf(false) }
-    val isTiltActive by rememberAntiPeepTiltState(enabled = true)
+    val isTiltActive by rememberAntiPeepTiltState(enabled = isAntiPeepTiltEnabled)
 
     val context = LocalContext.current
     val activity = remember(context) {

@@ -14,6 +14,16 @@ import org.privatetwo.app.MainActivity
 import org.privatetwo.app.PrivateTwoApp
 import org.privatetwo.app.R
 
+import android.app.AlarmManager
+import android.os.SystemClock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 /**
  * Foreground Service that keeps the WebSocket connection alive when the user minimizes
  * the app or is using other apps (YouTube, Instagram, Chrome, etc.), ensuring prompt
@@ -21,11 +31,15 @@ import org.privatetwo.app.R
  */
 class SignalingKeepAliveService : Service() {
 
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var connectionMonitorJob: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         startAsForeground()
+        startMonitoringConnection()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -41,6 +55,21 @@ class SignalingKeepAliveService : Service() {
         }
 
         return START_STICKY
+    }
+
+    private fun startMonitoringConnection() {
+        connectionMonitorJob?.cancel()
+        connectionMonitorJob = serviceScope.launch {
+            val app = application as? PrivateTwoApp ?: return@launch
+            app.signalingClient.connectionState.collect { state ->
+                if (state == SignalingConnectionState.DISCONNECTED && app.secureStorage.isPaired()) {
+                    delay(2000)
+                    if (app.signalingClient.connectionState.value == SignalingConnectionState.DISCONNECTED) {
+                        app.signalingClient.connect()
+                    }
+                }
+            }
+        }
     }
 
     private fun startAsForeground() {
@@ -72,7 +101,29 @@ class SignalingKeepAliveService : Service() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        val app = application as? PrivateTwoApp
+        if (app != null && app.secureStorage.isPaired()) {
+            val restartServiceIntent = Intent(applicationContext, SignalingKeepAliveService::class.java).apply {
+                setPackage(packageName)
+            }
+            val restartPendingIntent = PendingIntent.getService(
+                applicationContext, 1, restartServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            alarmManager?.set(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 1000,
+                restartPendingIntent
+            )
+        }
+    }
+
     override fun onDestroy() {
+        connectionMonitorJob?.cancel()
+        serviceScope.cancel()
         super.onDestroy()
     }
 

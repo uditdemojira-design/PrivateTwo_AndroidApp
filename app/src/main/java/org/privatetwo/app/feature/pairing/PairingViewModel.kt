@@ -17,6 +17,10 @@ class PairingViewModel(
         pairingManager.updateSignalingUrl(url)
     }
 
+    fun reconnectSignaling() {
+        pairingManager.reconnectSignaling()
+    }
+
     fun generatePairingCode() {
         pairingManager.generatePairingCode()
     }

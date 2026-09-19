@@ -60,6 +60,9 @@ class PrivateTwoApp : Application() {
 
         createNotificationChannels()
 
+        // Auto-connect to signaling server immediately on app launch
+        signalingClient.connect()
+
         if (secureStorage.isPaired()) {
             SignalingKeepAliveService.start(this)
         }

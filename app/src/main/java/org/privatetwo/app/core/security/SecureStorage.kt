@@ -289,7 +289,7 @@ class SecureStorage(private val context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_STEALTH_NOTIFICATIONS, value).apply()
 
     var isAntiPeepTiltEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ANTI_PEEP_TILT, true) // Enabled by default for anti-peeping
+        get() = prefs.getBoolean(KEY_ANTI_PEEP_TILT, false) // Disabled by default for maximum battery conservation; toggleable in settings
         set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_TILT, value).apply()
 
     var isAntiPeepShadeEnabled: Boolean

@@ -61,6 +61,12 @@ class PairingManager(
                 handleSignalingEvent(event)
             }
         }
+        signalingClient.connect()
+    }
+
+    fun reconnectSignaling() {
+        signalingClient.resetReconnectBackoff()
+        signalingClient.connect()
     }
 
     fun onSocketReconnected() {

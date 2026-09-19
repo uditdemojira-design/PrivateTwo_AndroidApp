@@ -39,7 +39,7 @@ fun MainScreen(
 
     var showUnpairDialog by remember { mutableStateOf(false) }
     var partnerName by remember { mutableStateOf(secureStorage.getPartnerDisplayName()) }
-    var showNamePromptDialog by remember { mutableStateOf(!secureStorage.hasPromptedName()) }
+    var showNamePromptDialog by remember { mutableStateOf(false) }
     var tempNameInput by remember { mutableStateOf(partnerName ?: "") }
 
     Scaffold(
@@ -412,10 +412,7 @@ fun MainScreen(
 
         if (showNamePromptDialog) {
             AlertDialog(
-                onDismissRequest = {
-                    secureStorage.setHasPromptedName(true)
-                    showNamePromptDialog = false
-                },
+                onDismissRequest = { showNamePromptDialog = false },
                 icon = {
                     Icon(
                         Icons.Default.Person,
@@ -426,7 +423,7 @@ fun MainScreen(
                 },
                 title = {
                     Text(
-                        text = "Set Chat Name",
+                        text = "Edit Chat Name",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -434,7 +431,7 @@ fun MainScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "Enter a name or nickname to display for your partner inside the chat and call screens:",
+                            text = "Enter a name or nickname to display inside chat and call screens:",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -458,18 +455,14 @@ fun MainScreen(
                             secureStorage.setPartnerDisplayName(null)
                             partnerName = null
                         }
-                        secureStorage.setHasPromptedName(true)
                         showNamePromptDialog = false
                     }) {
                         Text("Save Name")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        secureStorage.setHasPromptedName(true)
-                        showNamePromptDialog = false
-                    }) {
-                        Text("Skip / Keep Private")
+                    TextButton(onClick = { showNamePromptDialog = false }) {
+                        Text("Cancel")
                     }
                 }
             )

@@ -8,6 +8,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -59,6 +60,7 @@ fun PairingScreen(
                         connectionState = connectionState,
                         serverUrl = viewModel.getSignalingUrl(),
                         onUpdateServerUrl = { viewModel.updateSignalingUrl(it) },
+                        onReconnect = { viewModel.reconnectSignaling() },
                         onInputCodeChange = { if (it.length <= 6) inputCode = it },
                         onGenerateClick = { viewModel.generatePairingCode() },
                         onEnterClick = { viewModel.enterPairingCode(inputCode) }
@@ -143,7 +145,8 @@ fun ConnectingView(
 fun SignalingStatusCard(
     connectionState: SignalingConnectionState,
     serverUrl: String,
-    onUpdateServerUrl: (String) -> Unit
+    onUpdateServerUrl: (String) -> Unit,
+    onReconnect: () -> Unit = {}
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var editUrl by remember { mutableStateOf(serverUrl) }
@@ -185,15 +188,27 @@ fun SignalingStatusCard(
                     )
                 }
             }
-            IconButton(onClick = {
-                editUrl = serverUrl
-                showDialog = true
-            }) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = "Edit Signaling Server",
-                    modifier = Modifier.size(20.dp)
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (connectionState == SignalingConnectionState.DISCONNECTED) {
+                    IconButton(onClick = onReconnect) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Retry Connection",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                IconButton(onClick = {
+                    editUrl = serverUrl
+                    showDialog = true
+                }) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "Edit Signaling Server",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
@@ -255,6 +270,7 @@ fun UnpairedView(
     connectionState: SignalingConnectionState,
     serverUrl: String,
     onUpdateServerUrl: (String) -> Unit,
+    onReconnect: () -> Unit = {},
     onInputCodeChange: (String) -> Unit,
     onGenerateClick: () -> Unit,
     onEnterClick: () -> Unit
@@ -267,7 +283,8 @@ fun UnpairedView(
         SignalingStatusCard(
             connectionState = connectionState,
             serverUrl = serverUrl,
-            onUpdateServerUrl = onUpdateServerUrl
+            onUpdateServerUrl = onUpdateServerUrl,
+            onReconnect = onReconnect
         )
 
         // 1-Tap Quick Network Switcher

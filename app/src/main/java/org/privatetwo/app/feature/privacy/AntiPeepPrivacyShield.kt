@@ -33,17 +33,27 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+
 /**
  * Monitors the phone's physical orientation angle.
  * If the device is tilted sideways (> 26 degrees) towards a bystander,
  * it instantly flags tilt detection to black out the display.
+ *
+ * Battery Optimized:
+ * - Only listens when Activity is in RESUMED state (screen on & in foreground).
+ * - Immediately unregisters when paused/screen turned off.
+ * - Uses SENSOR_DELAY_NORMAL (~5 Hz) instead of high-frequency polling.
  */
 @Composable
 fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val isTilted = remember { mutableStateOf(false) }
 
-    DisposableEffect(enabled) {
+    DisposableEffect(enabled, lifecycleOwner) {
         if (!enabled) {
             isTilted.value = false
             return@DisposableEffect onDispose {}
@@ -55,6 +65,8 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
         if (sensorManager == null || accelerometer == null) {
             return@DisposableEffect onDispose {}
         }
+
+        var isRegistered = false
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
@@ -78,10 +90,37 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
 
-        sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        fun register() {
+            if (!isRegistered) {
+                sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_NORMAL)
+                isRegistered = true
+            }
+        }
+
+        fun unregister() {
+            if (isRegistered) {
+                sensorManager.unregisterListener(listener)
+                isRegistered = false
+                isTilted.value = false
+            }
+        }
+
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> register()
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP, Lifecycle.Event.ON_DESTROY -> unregister()
+                else -> {}
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            register()
+        }
 
         onDispose {
-            sensorManager.unregisterListener(listener)
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            unregister()
         }
     }
 
