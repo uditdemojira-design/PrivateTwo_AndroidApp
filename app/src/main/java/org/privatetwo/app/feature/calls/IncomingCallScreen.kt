@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun IncomingCallScreen(
     isVideo: Boolean,
+    partnerDisplayName: String? = null,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -130,7 +131,7 @@ fun IncomingCallScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Incoming Encrypted Call…",
+                text = if (isVideo) "Incoming Video Call…" else "Incoming Voice Call…",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.LightGray
             )
@@ -138,7 +139,7 @@ fun IncomingCallScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Private Partner",
+                text = partnerDisplayName ?: "Private Partner",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -198,7 +199,7 @@ fun IncomingCallScreen(
                     modifier = Modifier.size(68.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Call,
+                        imageVector = if (isVideo) Icons.Default.Videocam else Icons.Default.Call,
                         contentDescription = "Accept Call",
                         tint = Color.White,
                         modifier = Modifier.size(36.dp)

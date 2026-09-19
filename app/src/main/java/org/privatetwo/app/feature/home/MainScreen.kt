@@ -38,6 +38,9 @@ fun MainScreen(
     val peerDeviceId = remember { secureStorage.getPairedPeerDeviceId() ?: "Unknown Partner" }
 
     var showUnpairDialog by remember { mutableStateOf(false) }
+    var partnerName by remember { mutableStateOf(secureStorage.getPartnerDisplayName()) }
+    var showNamePromptDialog by remember { mutableStateOf(!secureStorage.hasPromptedName()) }
+    var tempNameInput by remember { mutableStateOf(partnerName ?: "") }
 
     Scaffold(
         topBar = {
@@ -125,6 +128,37 @@ fun MainScreen(
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF2E7D32)
                         )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Chat Display Name",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = partnerName ?: "Private Partner",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (partnerName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        IconButton(onClick = {
+                            tempNameInput = partnerName ?: ""
+                            showNamePromptDialog = true
+                        }) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Name",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     Column {
@@ -371,6 +405,71 @@ fun MainScreen(
                 dismissButton = {
                     TextButton(onClick = { showUnpairDialog = false }) {
                         Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        if (showNamePromptDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    secureStorage.setHasPromptedName(true)
+                    showNamePromptDialog = false
+                },
+                icon = {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Set Chat Name",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Enter a name or nickname to display for your partner inside the chat and call screens:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = tempNameInput,
+                            onValueChange = { tempNameInput = it },
+                            label = { Text("Display Name") },
+                            placeholder = { Text("e.g. Rahul, Priya, Alex") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val trimmed = tempNameInput.trim()
+                        if (trimmed.isNotBlank()) {
+                            secureStorage.setPartnerDisplayName(trimmed)
+                            partnerName = trimmed
+                        } else {
+                            secureStorage.setPartnerDisplayName(null)
+                            partnerName = null
+                        }
+                        secureStorage.setHasPromptedName(true)
+                        showNamePromptDialog = false
+                    }) {
+                        Text("Save Name")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        secureStorage.setHasPromptedName(true)
+                        showNamePromptDialog = false
+                    }) {
+                        Text("Skip / Keep Private")
                     }
                 }
             )

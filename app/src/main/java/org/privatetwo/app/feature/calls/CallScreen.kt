@@ -36,6 +36,7 @@ fun CallScreen(
     viewModel: CallViewModel,
     webRtcSessionManager: WebRtcSessionManager,
     isVideoCall: Boolean,
+    partnerDisplayName: String? = null,
     onCallEnded: () -> Unit
 ) {
     val callState by viewModel.callState.collectAsState()
@@ -149,7 +150,7 @@ fun CallScreen(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     Text(
-                        text = "Private Partner",
+                        text = partnerDisplayName ?: "Private Partner",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -195,7 +196,7 @@ fun CallScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = "Private Partner",
+                    text = partnerDisplayName ?: "Private Partner",
                     style = MaterialTheme.typography.headlineMedium,
                     color = Color.White
                 )

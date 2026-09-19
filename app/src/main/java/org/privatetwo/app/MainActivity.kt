@@ -189,6 +189,7 @@ class MainActivity : FragmentActivity() {
                         composable("chat") {
                             ChatScreen(
                                 viewModel = chatViewModel,
+                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
                                 onNavigateBack = {
                                     navController.popBackStack()
                                 },
@@ -215,6 +216,7 @@ class MainActivity : FragmentActivity() {
                                 viewModel = callViewModel,
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = false,
+                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
                                 onCallEnded = {
                                     navController.popBackStack()
                                 }
@@ -226,6 +228,7 @@ class MainActivity : FragmentActivity() {
                                 viewModel = callViewModel,
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = true,
+                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
                                 onCallEnded = {
                                     navController.popBackStack()
                                 }
@@ -233,13 +236,25 @@ class MainActivity : FragmentActivity() {
                         }
 
                         composable("incoming_call") {
+                            val isIncomingVideo by callViewModel.isIncomingCallVideo.collectAsState()
+                            val partnerDisplayName = app.secureStorage.getPartnerDisplayName()
                             IncomingCallScreen(
-                                isVideo = true,
+                                isVideo = isIncomingVideo,
+                                partnerDisplayName = partnerDisplayName,
                                 onAccept = {
-                                    runWithPermissions(listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) {
-                                        callViewModel.acceptIncomingCall(isVideo = true)
-                                        navController.navigate("call_video") {
-                                            popUpTo("incoming_call") { inclusive = true }
+                                    if (isIncomingVideo) {
+                                        runWithPermissions(listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) {
+                                            callViewModel.acceptIncomingCall(isVideo = true)
+                                            navController.navigate("call_video") {
+                                                popUpTo("incoming_call") { inclusive = true }
+                                            }
+                                        }
+                                    } else {
+                                        runWithPermissions(listOf(Manifest.permission.RECORD_AUDIO)) {
+                                            callViewModel.acceptIncomingCall(isVideo = false)
+                                            navController.navigate("call_audio") {
+                                                popUpTo("incoming_call") { inclusive = true }
+                                            }
                                         }
                                     }
                                 },

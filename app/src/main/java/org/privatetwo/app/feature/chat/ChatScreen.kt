@@ -50,6 +50,7 @@ private val WhatsAppTypingGreen = Color(0xFF25D366)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
+    partnerDisplayName: String? = null,
     onNavigateBack: () -> Unit,
     onStartAudioCall: () -> Unit,
     onStartVideoCall: () -> Unit,
@@ -132,7 +133,7 @@ fun ChatScreen(
 
                         Column {
                             Text(
-                                text = "Private Partner",
+                                text = partnerDisplayName ?: "Private Partner",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White

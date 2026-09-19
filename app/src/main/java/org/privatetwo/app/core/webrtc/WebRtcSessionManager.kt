@@ -20,6 +20,7 @@ import org.privatetwo.app.BuildConfig
 import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingEvent
 import org.webrtc.*
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.concurrent.Executors
@@ -69,6 +70,9 @@ class WebRtcSessionManager(
     private val _callState = MutableStateFlow(WebRtcCallState.IDLE)
     val callState: StateFlow<WebRtcCallState> = _callState.asStateFlow()
 
+    private val _isIncomingCallVideo = MutableStateFlow(false)
+    val isIncomingCallVideo: StateFlow<Boolean> = _isIncomingCallVideo.asStateFlow()
+
     private val _isAudioMuted = MutableStateFlow(false)
     val isAudioMuted: StateFlow<Boolean> = _isAudioMuted.asStateFlow()
 
@@ -101,8 +105,16 @@ class WebRtcSessionManager(
         )
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
+        val audioDeviceModule = JavaAudioDeviceModule.builder(context)
+            .setUseHardwareAcousticEchoCanceler(JavaAudioDeviceModule.isBuiltInAcousticEchoCancelerSupported())
+            .setUseHardwareNoiseSuppressor(JavaAudioDeviceModule.isBuiltInNoiseSuppressorSupported())
+            .setUseStereoInput(true)
+            .setUseStereoOutput(true)
+            .createAudioDeviceModule()
+
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setOptions(options)
+            .setAudioDeviceModule(audioDeviceModule)
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
@@ -305,7 +317,65 @@ class WebRtcSessionManager(
                     android.util.Log.e("WebRtcManager", "Error initializing camera", e)
                 }
             }
+        } else {
+            // Strictly audio-only: ensure camera capturer and video tracks are fully disposed
+            try {
+                cameraCapturer?.stopCapture()
+                cameraCapturer?.dispose()
+                cameraCapturer = null
+                surfaceTextureHelper?.dispose()
+                surfaceTextureHelper = null
+                localVideoTrack?.setEnabled(false)
+                localVideoTrack?.dispose()
+                localVideoTrack = null
+                _localVideoTrackState.value = null
+                videoSource?.dispose()
+                videoSource = null
+            } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Munges SDP to enforce Opus HD audio:
+     * 128 kbps bitrate, in-band FEC (forward error correction for zero packet loss drops),
+     * stereo reproduction, and 10ms packet time for ultra-low latency & crisp fidelity.
+     */
+    private fun mungeSdpForHdAudio(sdp: String): String {
+        val lines = sdp.split("\r\n").toMutableList()
+        var opusPayloadType: String? = null
+
+        for (line in lines) {
+            if (line.startsWith("a=rtpmap:") && line.contains("opus/48000", ignoreCase = true)) {
+                val parts = line.substringAfter("a=rtpmap:").split(" ")
+                if (parts.isNotEmpty()) {
+                    opusPayloadType = parts[0]
+                    break
+                }
+            }
+        }
+
+        if (opusPayloadType != null) {
+            val fmtpPrefix = "a=fmtp:$opusPayloadType "
+            val hdParams = "maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1;minptime=10;cbr=1"
+            var foundFmtp = false
+            for (i in lines.indices) {
+                if (lines[i].startsWith(fmtpPrefix)) {
+                    val existingParams = lines[i].substringAfter(fmtpPrefix)
+                    lines[i] = "$fmtpPrefix$existingParams;$hdParams"
+                    foundFmtp = true
+                    break
+                }
+            }
+            if (!foundFmtp) {
+                val rtpmapPrefix = "a=rtpmap:$opusPayloadType"
+                val rtpmapIndex = lines.indexOfFirst { it.startsWith(rtpmapPrefix) }
+                if (rtpmapIndex != -1) {
+                    lines.add(rtpmapIndex + 1, "$fmtpPrefix$hdParams")
+                }
+            }
+        }
+
+        return lines.joinToString("\r\n")
     }
 
     /**
@@ -318,6 +388,7 @@ class WebRtcSessionManager(
 
     fun startOutgoingCall(isVideo: Boolean) {
         isVideoCallSession = isVideo
+        _isIncomingCallVideo.value = isVideo
         _callState.value = WebRtcCallState.OUTGOING_CALL
         executor.execute {
             // Cut any active cellular/system call and any previous call session in app
@@ -330,7 +401,9 @@ class WebRtcSessionManager(
             peerConnection = createPeerConnection()
 
             localAudioTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
-            localVideoTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
+            if (isVideo) {
+                localVideoTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
+            }
 
             val dcInit = DataChannel.Init()
             val dc = peerConnection?.createDataChannel("privatetwo-data", dcInit)
@@ -343,12 +416,14 @@ class WebRtcSessionManager(
 
             peerConnection?.createOffer(object : SdpObserverAdapter() {
                 override fun onCreateSuccess(desc: SessionDescription) {
+                    val mungedSdp = mungeSdpForHdAudio(desc.description)
+                    val mungedDesc = SessionDescription(desc.type, mungedSdp)
                     peerConnection?.setLocalDescription(object : SdpObserverAdapter() {
                         override fun onSetSuccess() {
                             signalingClient.sendCallOffer(isVideo)
-                            signalingClient.sendSdpOffer(desc.description)
+                            signalingClient.sendSdpOffer(mungedSdp)
                         }
-                    }, desc)
+                    }, mungedDesc)
                 }
             }, constraints)
         }
@@ -356,6 +431,7 @@ class WebRtcSessionManager(
 
     fun acceptIncomingCall(isVideo: Boolean) {
         isVideoCallSession = isVideo
+        _isIncomingCallVideo.value = isVideo
         _callState.value = WebRtcCallState.CONNECTING
         executor.execute {
             // Cut any active cellular phone call immediately
@@ -369,7 +445,9 @@ class WebRtcSessionManager(
 
             peerConnection = createPeerConnection()
             localAudioTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
-            localVideoTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
+            if (isVideo) {
+                localVideoTrack?.let { peerConnection?.addTrack(it, listOf("ARDAMS")) }
+            }
 
             val offerSdp = pendingRemoteSdpOffer
             if (offerSdp != null) {
@@ -397,11 +475,13 @@ class WebRtcSessionManager(
 
                 peerConnection?.createAnswer(object : SdpObserverAdapter() {
                     override fun onCreateSuccess(desc: SessionDescription) {
+                        val mungedSdp = mungeSdpForHdAudio(desc.description)
+                        val mungedDesc = SessionDescription(desc.type, mungedSdp)
                         peerConnection?.setLocalDescription(object : SdpObserverAdapter() {
                             override fun onSetSuccess() {
-                                signalingClient.sendSdpAnswer(desc.description)
+                                signalingClient.sendSdpAnswer(mungedSdp)
                             }
-                        }, desc)
+                        }, mungedDesc)
                     }
                 }, constraints)
             }
@@ -616,6 +696,8 @@ class WebRtcSessionManager(
             signalingClient.events.collect { event ->
                 when (event) {
                     is SignalingEvent.CallOfferReceived -> {
+                        _isIncomingCallVideo.value = event.isVideo
+                        isVideoCallSession = event.isVideo
                         _callState.value = WebRtcCallState.INCOMING_CALL
                     }
                     is SignalingEvent.CallAnswerReceived -> {

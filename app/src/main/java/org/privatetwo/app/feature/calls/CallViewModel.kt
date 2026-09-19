@@ -19,6 +19,7 @@ class CallViewModel(
 ) : ViewModel() {
 
     val callState: StateFlow<WebRtcCallState> = webRtcSessionManager.callState
+    val isIncomingCallVideo: StateFlow<Boolean> = webRtcSessionManager.isIncomingCallVideo
     val isAudioMuted: StateFlow<Boolean> = webRtcSessionManager.isAudioMuted
     val isVideoEnabled: StateFlow<Boolean> = webRtcSessionManager.isVideoEnabled
     val isSpeakerphoneOn: StateFlow<Boolean> = webRtcSessionManager.isSpeakerphoneOn

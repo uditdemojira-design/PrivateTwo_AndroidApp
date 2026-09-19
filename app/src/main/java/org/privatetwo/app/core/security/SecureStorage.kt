@@ -56,6 +56,9 @@ class SecureStorage(private val context: Context) {
         private const val KEY_INBOUND_KEY = "inbound_session_key"
         private const val KEY_IS_INITIATOR = "is_initiator"
 
+        private const val KEY_PARTNER_DISPLAY_NAME = "partner_display_name"
+        private const val KEY_HAS_PROMPTED_NAME = "has_prompted_name"
+
         // Ephemeral session keys cached in memory
         @Volatile
         var activeInboundSessionKey: ByteArray? = null
@@ -240,11 +243,32 @@ class SecureStorage(private val context: Context) {
             .remove(KEY_OUTBOUND_KEY)
             .remove(KEY_INBOUND_KEY)
             .remove(KEY_IS_INITIATOR)
+            .remove(KEY_PARTNER_DISPLAY_NAME)
+            .remove(KEY_HAS_PROMPTED_NAME)
             .putBoolean(KEY_IS_PAIRED, false)
             .apply()
 
         activeInboundSessionKey = null
         activeOutboundSessionKey = null
+    }
+
+    // --- Partner Display Name ---
+
+    fun getPartnerDisplayName(): String? = prefs.getString(KEY_PARTNER_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
+
+    fun setPartnerDisplayName(name: String?) {
+        val trimmed = name?.trim()
+        if (trimmed.isNullOrBlank()) {
+            prefs.edit().remove(KEY_PARTNER_DISPLAY_NAME).apply()
+        } else {
+            prefs.edit().putString(KEY_PARTNER_DISPLAY_NAME, trimmed).apply()
+        }
+    }
+
+    fun hasPromptedName(): Boolean = prefs.getBoolean(KEY_HAS_PROMPTED_NAME, false)
+
+    fun setHasPromptedName(prompted: Boolean) {
+        prefs.edit().putBoolean(KEY_HAS_PROMPTED_NAME, prompted).apply()
     }
 
     // --- Privacy Settings ---

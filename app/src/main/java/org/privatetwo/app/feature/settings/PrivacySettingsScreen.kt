@@ -99,6 +99,94 @@ fun PrivacySettingsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
+                text = "CHAT PERSONALIZATION",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+
+            var partnerName by remember { mutableStateOf(secureStorage.getPartnerDisplayName()) }
+            var showEditNameDialog by remember { mutableStateOf(false) }
+            var editNameInput by remember { mutableStateOf(partnerName ?: "") }
+
+            OutlinedCard(
+                onClick = {
+                    editNameInput = partnerName ?: ""
+                    showEditNameDialog = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column {
+                            Text(
+                                text = "Partner Display Name",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = partnerName ?: "Not set (displays 'Private Partner')",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            if (showEditNameDialog) {
+                AlertDialog(
+                    onDismissRequest = { showEditNameDialog = false },
+                    title = { Text("Edit Display Name") },
+                    text = {
+                        OutlinedTextField(
+                            value = editNameInput,
+                            onValueChange = { editNameInput = it },
+                            label = { Text("Display Name") },
+                            placeholder = { Text("e.g. Rahul, Priya") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            val trimmed = editNameInput.trim()
+                            if (trimmed.isNotBlank()) {
+                                secureStorage.setPartnerDisplayName(trimmed)
+                                partnerName = trimmed
+                            } else {
+                                secureStorage.setPartnerDisplayName(null)
+                                partnerName = null
+                            }
+                            showEditNameDialog = false
+                        }) {
+                            Text("Save")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showEditNameDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 text = "CRYPTOGRAPHIC IDENTITIES",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
