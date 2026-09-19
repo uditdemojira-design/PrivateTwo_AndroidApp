@@ -38,9 +38,10 @@ fun MainScreen(
     val peerDeviceId = remember { secureStorage.getPairedPeerDeviceId() ?: "Unknown Partner" }
 
     var showUnpairDialog by remember { mutableStateOf(false) }
-    var partnerName by remember { mutableStateOf(secureStorage.getPartnerDisplayName()) }
+    val storedName = secureStorage.getPartnerDisplayName()
+    var partnerName by remember(storedName) { mutableStateOf(storedName) }
     var showNamePromptDialog by remember { mutableStateOf(false) }
-    var tempNameInput by remember { mutableStateOf(partnerName ?: "") }
+    var tempNameInput by remember(partnerName) { mutableStateOf(partnerName ?: "") }
 
     Scaffold(
         topBar = {

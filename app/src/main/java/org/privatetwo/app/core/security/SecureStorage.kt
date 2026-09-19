@@ -248,8 +248,6 @@ class SecureStorage(private val context: Context) {
             .remove(KEY_OUTBOUND_KEY)
             .remove(KEY_INBOUND_KEY)
             .remove(KEY_IS_INITIATOR)
-            .remove(KEY_PARTNER_DISPLAY_NAME)
-            .remove(KEY_HAS_PROMPTED_NAME)
             .putBoolean(KEY_IS_PAIRED, false)
             .apply()
 
@@ -266,11 +264,14 @@ class SecureStorage(private val context: Context) {
         if (trimmed.isNullOrBlank()) {
             prefs.edit().remove(KEY_PARTNER_DISPLAY_NAME).apply()
         } else {
-            prefs.edit().putString(KEY_PARTNER_DISPLAY_NAME, trimmed).apply()
+            prefs.edit()
+                .putString(KEY_PARTNER_DISPLAY_NAME, trimmed)
+                .putBoolean(KEY_HAS_PROMPTED_NAME, true)
+                .apply()
         }
     }
 
-    fun hasPromptedName(): Boolean = prefs.getBoolean(KEY_HAS_PROMPTED_NAME, false)
+    fun hasPromptedName(): Boolean = prefs.getBoolean(KEY_HAS_PROMPTED_NAME, false) || !getPartnerDisplayName().isNullOrBlank()
 
     fun setHasPromptedName(prompted: Boolean) {
         prefs.edit().putBoolean(KEY_HAS_PROMPTED_NAME, prompted).apply()
