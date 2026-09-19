@@ -105,12 +105,48 @@ fun PrivacySettingsScreen(
                 fontWeight = FontWeight.Bold
             )
 
+            var antiPeepLouver by remember { mutableStateOf(secureStorage.isAntiPeepLouverEnabled) }
+            var antiPeepShade by remember { mutableStateOf(secureStorage.isAntiPeepShadeEnabled) }
+            var stealthMessages by remember { mutableStateOf(secureStorage.isStealthMessagesEnabled) }
             var antiPeepTilt by remember { mutableStateOf(secureStorage.isAntiPeepTiltEnabled) }
 
             SettingSwitchItem(
                 icon = Icons.Default.Security,
-                title = "Side-Angle Tilt Auto-Blackout",
-                subtitle = "Instantly turns screen pitch black if phone is tilted sideways (>26°), preventing bystanders and shoulder-surfers from reading.",
+                title = "Side-Angle Blocker (Micro-Louvers)",
+                subtitle = "Draws polarized micro-louvers that block off-axis visibility (>25°), preventing bystanders next to you from reading.",
+                checked = antiPeepLouver,
+                onCheckedChange = {
+                    antiPeepLouver = it
+                    secureStorage.isAntiPeepLouverEnabled = it
+                }
+            )
+
+            SettingSwitchItem(
+                icon = Icons.Default.Lock,
+                title = "Tap-to-Reveal Messages (Stealth Mode)",
+                subtitle = "Conceals all messages behind privacy blocks. Only tapped messages reveal for 4 seconds, guaranteeing 100% privacy.",
+                checked = stealthMessages,
+                onCheckedChange = {
+                    stealthMessages = it
+                    secureStorage.isStealthMessagesEnabled = it
+                }
+            )
+
+            SettingSwitchItem(
+                icon = Icons.Default.VisibilityOff,
+                title = "Reading Curtain (Privacy Shade)",
+                subtitle = "Covers the screen with a dark curtain except a movable reading slot you drag with your finger.",
+                checked = antiPeepShade,
+                onCheckedChange = {
+                    antiPeepShade = it
+                    secureStorage.isAntiPeepShadeEnabled = it
+                }
+            )
+
+            SettingSwitchItem(
+                icon = Icons.Default.Fingerprint,
+                title = "Emergency Heavy-Tilt Blackout",
+                subtitle = "Instantly blacks out screen if phone is tilted heavily (>50°) away from you when someone leans over.",
                 checked = antiPeepTilt,
                 onCheckedChange = {
                     antiPeepTilt = it

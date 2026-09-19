@@ -61,6 +61,8 @@ class SecureStorage(private val context: Context) {
 
         private const val KEY_ANTI_PEEP_TILT = "anti_peep_tilt_enabled"
         private const val KEY_ANTI_PEEP_SHADE = "anti_peep_shade_enabled"
+        private const val KEY_ANTI_PEEP_LOUVER = "anti_peep_louver_enabled"
+        private const val KEY_STEALTH_MESSAGES = "stealth_messages_enabled"
 
         // Ephemeral session keys cached in memory
         @Volatile
@@ -295,6 +297,14 @@ class SecureStorage(private val context: Context) {
     var isAntiPeepShadeEnabled: Boolean
         get() = prefs.getBoolean(KEY_ANTI_PEEP_SHADE, false)
         set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_SHADE, value).apply()
+
+    var isAntiPeepLouverEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ANTI_PEEP_LOUVER, false)
+        set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_LOUVER, value).apply()
+
+    var isStealthMessagesEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STEALTH_MESSAGES, false)
+        set(value) = prefs.edit().putBoolean(KEY_STEALTH_MESSAGES, value).apply()
 
     fun getSignalingUrl(defaultUrl: String): String {
         val saved = prefs.getString("signaling_server_url", null)

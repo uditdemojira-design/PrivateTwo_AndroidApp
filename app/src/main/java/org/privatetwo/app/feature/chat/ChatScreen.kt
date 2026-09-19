@@ -8,6 +8,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -36,6 +39,7 @@ import org.privatetwo.app.core.signaling.SignalingConnectionState
 import org.privatetwo.app.core.notification.NotificationHelper
 import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
+import org.privatetwo.app.feature.privacy.PrivacyControlsBottomSheet
 import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
 import java.io.File
 import java.io.FileOutputStream
@@ -74,7 +78,11 @@ fun ChatScreen(
     }
 
     var isManualBlackoutActive by remember { mutableStateOf(false) }
-    var isAntiPeepTiltEnabled by remember { mutableStateOf(secureStorage?.isAntiPeepTiltEnabled ?: true) }
+    var isAntiPeepTiltEnabled by remember { mutableStateOf(secureStorage?.isAntiPeepTiltEnabled ?: false) }
+    var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: false) }
+    var isReadingCurtainActive by remember { mutableStateOf(secureStorage?.isAntiPeepShadeEnabled ?: false) }
+    var isStealthMaskActive by remember { mutableStateOf(secureStorage?.isStealthMessagesEnabled ?: false) }
+    var showPrivacySheet by remember { mutableStateOf(false) }
     val isTiltActive by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
 
     val messages by viewModel.messages.collectAsState()
@@ -120,7 +128,13 @@ fun ChatScreen(
     AntiPeepShieldOverlay(
         isTiltBlackoutActive = isTiltActive,
         isManualBlackoutActive = isManualBlackoutActive,
-        onDismissManualBlackout = { isManualBlackoutActive = false }
+        isLouverFilterActive = isLouverFilterActive,
+        isReadingCurtainActive = isReadingCurtainActive,
+        onDismissManualBlackout = { isManualBlackoutActive = false },
+        onDismissReadingCurtain = {
+            isReadingCurtainActive = false
+            secureStorage?.isAntiPeepShadeEnabled = false
+        }
     ) {
         Scaffold(
             topBar = {
@@ -200,11 +214,11 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { isManualBlackoutActive = true }) {
+                        IconButton(onClick = { showPrivacySheet = true }) {
                             Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = "Hide Screen (Blackout)",
-                                tint = if (isAntiPeepTiltEnabled) WhatsAppTypingGreen else Color.White
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = "Anti-Peep Privacy Controls",
+                                tint = if (isLouverFilterActive || isReadingCurtainActive || isStealthMaskActive) WhatsAppTypingGreen else Color.White
                             )
                         }
                         IconButton(onClick = onStartAudioCall) {
@@ -465,6 +479,7 @@ fun ChatScreen(
                     items(messages, key = { it.id }) { message ->
                         MessageBubble(
                             message = message,
+                            isStealthMaskActive = isStealthMaskActive,
                             onRetry = { viewModel.retryMessage(message.id) },
                             onDelete = { viewModel.deleteMessage(message.id) }
                         )
@@ -501,8 +516,32 @@ fun ChatScreen(
                 }
             )
         }
+
+        if (showPrivacySheet) {
+            PrivacyControlsBottomSheet(
+                isLouverActive = isLouverFilterActive,
+                isCurtainActive = isReadingCurtainActive,
+                isStealthMaskActive = isStealthMaskActive,
+                onToggleLouver = {
+                    isLouverFilterActive = it
+                    secureStorage?.isAntiPeepLouverEnabled = it
+                },
+                onToggleCurtain = {
+                    isReadingCurtainActive = it
+                    secureStorage?.isAntiPeepShadeEnabled = it
+                },
+                onToggleStealthMask = {
+                    isStealthMaskActive = it
+                    secureStorage?.isStealthMessagesEnabled = it
+                },
+                onTriggerBlackout = {
+                    isManualBlackoutActive = true
+                },
+                onDismiss = { showPrivacySheet = false }
+            )
+        }
     }
-    }
+}
 }
 
 /**
@@ -592,11 +631,21 @@ fun isSingleOrDoubleEmoji(text: String): Boolean {
 @Composable
 fun MessageBubble(
     message: ChatMessage,
+    isStealthMaskActive: Boolean = false,
     onRetry: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isOutgoing = !message.isIncoming
     val alignment = if (isOutgoing) Alignment.End else Alignment.Start
+
+    var isTemporarilyRevealed by remember { mutableStateOf(false) }
+    LaunchedEffect(isTemporarilyRevealed) {
+        if (isTemporarilyRevealed) {
+            kotlinx.coroutines.delay(4500)
+            isTemporarilyRevealed = false
+        }
+    }
+    val isHidden = isStealthMaskActive && !isTemporarilyRevealed
 
     val isLargeEmojiOnly = message.messageType == "TEXT" && isSingleOrDoubleEmoji(message.text)
 
@@ -611,33 +660,52 @@ fun MessageBubble(
         horizontalAlignment = alignment
     ) {
         if (isLargeEmojiOnly) {
-            // Standalone large emoji rendering like WhatsApp
-            Column(
-                horizontalAlignment = alignment,
-                modifier = Modifier
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = { showMessageMenu = true }
-                    )
-            ) {
-                Text(
-                    text = message.text,
-                    fontSize = 44.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(end = 6.dp)
+            if (isHidden) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = bubbleColor,
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .clickable { isTemporarilyRevealed = true }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = WhatsAppTypingGreen, modifier = Modifier.size(16.dp))
+                        Text("🔒 Emoji • Tap to View", color = WhatsAppTime, style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic))
+                    }
+                }
+            } else {
+                // Standalone large emoji rendering like WhatsApp
+                Column(
+                    horizontalAlignment = alignment,
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { showMessageMenu = true }
+                        )
                 ) {
                     Text(
-                        text = formattedTime,
-                        color = WhatsAppTime,
-                        style = MaterialTheme.typography.labelSmall
+                        text = message.text,
+                        fontSize = 44.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp)
                     )
-                    if (isOutgoing) {
-                        StatusTick(message.status)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Text(
+                            text = formattedTime,
+                            color = WhatsAppTime,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        if (isOutgoing) {
+                            StatusTick(message.status)
+                        }
                     }
                 }
             }
@@ -655,76 +723,100 @@ fun MessageBubble(
                 modifier = Modifier
                     .widthIn(min = 60.dp, max = 300.dp)
                     .combinedClickable(
-                        onClick = {},
+                        onClick = {
+                            if (isHidden) isTemporarilyRevealed = true
+                        },
                         onLongClick = { showMessageMenu = true }
                     )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                    if (message.messageType == "PHOTO" && message.mediaLocalPath != null) {
-                        val bitmap = remember(message.mediaLocalPath) {
-                            try {
-                                BitmapFactory.decodeFile(message.mediaLocalPath)
-                            } catch (e: Exception) {
-                                null
-                            }
+                    if (isHidden) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .clickable { isTemporarilyRevealed = true }
+                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = WhatsAppTypingGreen,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = if (message.messageType == "PHOTO") "📷 Photo • Tap to View" else "🔒 Message • Tap to View",
+                                color = WhatsAppTime,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic)
+                            )
                         }
-                        if (bitmap != null) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Photo",
-                                contentScale = ContentScale.Crop,
+                    } else {
+                        if (message.messageType == "PHOTO" && message.mediaLocalPath != null) {
+                            val bitmap = remember(message.mediaLocalPath) {
+                                try {
+                                    BitmapFactory.decodeFile(message.mediaLocalPath)
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 260.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                        } else if (message.messageType == "FILE") {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0x22000000),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 260.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                        }
-                    } else if (message.messageType == "FILE") {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0x22000000),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 6.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.padding(8.dp)
+                                    .padding(bottom = 6.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.InsertDriveFile,
-                                    contentDescription = "File",
-                                    tint = WhatsAppTypingGreen,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = message.mediaFileName ?: "File",
-                                        color = WhatsAppText,
-                                        fontWeight = FontWeight.SemiBold,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.padding(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.InsertDriveFile,
+                                        contentDescription = "File",
+                                        tint = WhatsAppTypingGreen,
+                                        modifier = Modifier.size(28.dp)
                                     )
-                                    Text(
-                                        text = "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB",
-                                        color = WhatsAppTime,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = message.mediaFileName ?: "File",
+                                            color = WhatsAppText,
+                                            fontWeight = FontWeight.SemiBold,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB",
+                                            color = WhatsAppTime,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (message.messageType == "TEXT" || (message.messageType != "PHOTO" && message.text != message.mediaFileName)) {
-                        Text(
-                            text = message.text,
-                            color = WhatsAppText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(bottom = 2.dp)
-                        )
+                        if (message.messageType == "TEXT" || (message.messageType != "PHOTO" && message.text != message.mediaFileName)) {
+                            Text(
+                                text = message.text,
+                                color = WhatsAppText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(bottom = 2.dp)
+                            )
+                        }
                     }
 
                     Row(
