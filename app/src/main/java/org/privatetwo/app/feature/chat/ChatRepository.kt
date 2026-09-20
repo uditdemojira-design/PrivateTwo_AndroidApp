@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.FileOutputStream
+import org.json.JSONObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,6 +60,9 @@ class ChatRepository(
 
     private val _isPeerTyping = MutableStateFlow(false)
     val isPeerTyping: StateFlow<Boolean> = _isPeerTyping.asStateFlow()
+
+    private val _partnerDisplayName = MutableStateFlow<String?>(secureStorage.getPartnerDisplayName())
+    val partnerDisplayName: StateFlow<String?> = _partnerDisplayName.asStateFlow()
     private var typingResetJob: Job? = null
     private var lastTypingSentTime: Long = 0L
 
@@ -71,8 +75,15 @@ class ChatRepository(
 
         scope.launch {
             signalingClient.events.collect { event ->
-                if (event is SignalingEvent.E2eeEnvelopeReceived) {
-                    handleIncomingRawEnvelope(event.envelopeJson)
+                when (event) {
+                    is SignalingEvent.E2eeEnvelopeReceived -> {
+                        handleIncomingRawEnvelope(event.envelopeJson)
+                    }
+                    is SignalingEvent.PeerConnected -> {
+                        sendNameExchange()
+                        resendPendingOutboundMessages()
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -245,6 +256,54 @@ class ChatRepository(
         messageId
     }
 
+    suspend fun sendAudio(audioFile: File): String = withContext(Dispatchers.IO) {
+        val messageId = UUID.randomUUID().toString()
+        val timestamp = System.currentTimeMillis()
+        val localDeviceId = secureStorage.getLocalDeviceId()
+        val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: throw IllegalStateException("Device not paired")
+
+        val localKey = getOrCreateDatabaseKey()
+        val localEncrypted = CryptoEngine.encrypt(localKey, audioFile.name.toByteArray(Charsets.UTF_8))
+        val iv = localEncrypted.copyOfRange(0, 12)
+        val tag = localEncrypted.copyOfRange(localEncrypted.size - 16, localEncrypted.size)
+        val ciphertext = localEncrypted.copyOfRange(12, localEncrypted.size - 16)
+
+        val entity = MessageEntity(
+            id = messageId,
+            timestamp = timestamp,
+            senderDeviceId = localDeviceId,
+            recipientDeviceId = peerDeviceId,
+            encryptedContent = Base64.getEncoder().encodeToString(ciphertext),
+            nonce = Base64.getEncoder().encodeToString(iv),
+            authTag = Base64.getEncoder().encodeToString(tag),
+            deliveryStatus = DeliveryStatus.SENDING,
+            messageType = "AUDIO",
+            isIncoming = false,
+            mediaLocalPath = audioFile.absolutePath,
+            mediaFileName = audioFile.name,
+            mediaFileSize = audioFile.length()
+        )
+        database.messageDao().insertMessage(entity)
+
+        fileTransferManager.sendFile(
+            file = audioFile,
+            isPhoto = false,
+            isAudio = true,
+            transferId = messageId,
+            nextSequenceNumber = { sequenceCounter++ }
+        ) { envelope ->
+            val json = envelope.toJson()
+            val sentViaP2p = webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))
+            if (!sentViaP2p) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+            delay(10)
+        }
+
+        database.messageDao().updateDeliveryStatus(messageId, DeliveryStatus.SENT)
+        messageId
+    }
+
     private fun compressImageFile(original: File): File {
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -352,6 +411,9 @@ class ChatRepository(
                     val tag = localEncrypted.copyOfRange(localEncrypted.size - 16, localEncrypted.size)
                     val ciphertext = localEncrypted.copyOfRange(12, localEncrypted.size - 16)
 
+                    val isChatOpen = NotificationHelper.isChatVisible.get()
+                    val status = if (isChatOpen) DeliveryStatus.READ else DeliveryStatus.DELIVERED
+
                     val entity = MessageEntity(
                         id = envelope.messageId,
                         timestamp = envelope.timestamp,
@@ -360,29 +422,49 @@ class ChatRepository(
                         encryptedContent = Base64.getEncoder().encodeToString(ciphertext),
                         nonce = Base64.getEncoder().encodeToString(iv),
                         authTag = Base64.getEncoder().encodeToString(tag),
-                        deliveryStatus = DeliveryStatus.DELIVERED,
+                        deliveryStatus = status,
                         messageType = "TEXT",
                         isIncoming = true
                     )
                     database.messageDao().insertMessage(entity)
                     sendDeliveryReceipt(envelope.messageId)
-
-                    val textPreview = String(decryptedBytes, Charsets.UTF_8)
-                    NotificationHelper.showIncomingMessageNotification(
-                        context = context,
-                        secureStorage = secureStorage,
-                        messageText = textPreview,
-                        messageType = "TEXT"
-                    )
+                    if (isChatOpen) {
+                        sendReadReceipt(envelope.messageId)
+                    } else {
+                        val textPreview = String(decryptedBytes, Charsets.UTF_8)
+                        NotificationHelper.showIncomingMessageNotification(
+                            context = context,
+                            secureStorage = secureStorage,
+                            messageText = textPreview,
+                            messageType = "TEXT"
+                        )
+                    }
                 }
                 MessageType.DELIVERY_RECEIPT -> {
                     val receiptId = String(decryptedBytes, Charsets.UTF_8)
-                    database.messageDao().updateDeliveryStatus(receiptId, DeliveryStatus.DELIVERED)
+                    val existing = database.messageDao().getMessageById(receiptId)
+                    if (existing != null && existing.deliveryStatus != DeliveryStatus.READ) {
+                        database.messageDao().updateDeliveryStatus(receiptId, DeliveryStatus.DELIVERED)
+                    }
                 }
-                MessageType.PHOTO_HEADER, MessageType.FILE_HEADER -> {
+                MessageType.READ_RECEIPT -> {
+                    val receiptId = String(decryptedBytes, Charsets.UTF_8)
+                    database.messageDao().updateDeliveryStatus(receiptId, DeliveryStatus.READ)
+                }
+                MessageType.NAME_EXCHANGE -> {
+                    try {
+                        val json = JSONObject(String(decryptedBytes, Charsets.UTF_8))
+                        val partnerName = json.getString("displayName")
+                        if (partnerName.isNotBlank()) {
+                            secureStorage.setPartnerDisplayName(partnerName)
+                            _partnerDisplayName.value = partnerName
+                        }
+                    } catch (_: Exception) {}
+                }
+                MessageType.PHOTO_HEADER, MessageType.FILE_HEADER, MessageType.AUDIO_HEADER -> {
                     fileTransferManager.handleIncomingHeader(decryptedBytes)
                 }
-                MessageType.PHOTO_CHUNK, MessageType.FILE_CHUNK -> {
+                MessageType.PHOTO_CHUNK, MessageType.FILE_CHUNK, MessageType.AUDIO_CHUNK -> {
                     val completed = fileTransferManager.handleIncomingChunk(decryptedBytes)
                     if (completed != null) {
                         val localKey = getOrCreateDatabaseKey()
@@ -390,6 +472,15 @@ class ChatRepository(
                         val iv = localEncrypted.copyOfRange(0, 12)
                         val tag = localEncrypted.copyOfRange(localEncrypted.size - 16, localEncrypted.size)
                         val ciphertext = localEncrypted.copyOfRange(12, localEncrypted.size - 16)
+
+                        val isChatOpen = NotificationHelper.isChatVisible.get()
+                        val status = if (isChatOpen) DeliveryStatus.READ else DeliveryStatus.DELIVERED
+
+                        val msgType = when {
+                            completed.isPhoto -> "PHOTO"
+                            completed.isAudio -> "AUDIO"
+                            else -> "FILE"
+                        }
 
                         val entity = MessageEntity(
                             id = completed.transferId,
@@ -399,8 +490,8 @@ class ChatRepository(
                             encryptedContent = Base64.getEncoder().encodeToString(ciphertext),
                             nonce = Base64.getEncoder().encodeToString(iv),
                             authTag = Base64.getEncoder().encodeToString(tag),
-                            deliveryStatus = DeliveryStatus.DELIVERED,
-                            messageType = if (completed.isPhoto) "PHOTO" else "FILE",
+                            deliveryStatus = status,
+                            messageType = msgType,
                             isIncoming = true,
                             mediaLocalPath = completed.file.absolutePath,
                             mediaFileName = completed.file.name,
@@ -408,13 +499,16 @@ class ChatRepository(
                         )
                         database.messageDao().insertMessage(entity)
                         sendDeliveryReceipt(completed.transferId)
-
-                        NotificationHelper.showIncomingMessageNotification(
-                            context = context,
-                            secureStorage = secureStorage,
-                            messageText = null,
-                            messageType = if (completed.isPhoto) "PHOTO" else "FILE"
-                        )
+                        if (isChatOpen) {
+                            sendReadReceipt(completed.transferId)
+                        } else {
+                            NotificationHelper.showIncomingMessageNotification(
+                                context = context,
+                                secureStorage = secureStorage,
+                                messageText = null,
+                                messageType = msgType
+                            )
+                        }
                     }
                 }
                 else -> Unit
@@ -441,6 +535,94 @@ class ChatRepository(
         val json = envelope.toJson()
         if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
             signalingClient.sendE2eeEnvelope(json)
+        }
+    }
+
+    fun sendReadReceipt(originalMessageId: String) {
+        scope.launch {
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
+            val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
+
+            val envelope = MessageEnvelope.pack(
+                senderDeviceId = localDeviceId,
+                recipientDeviceId = peerDeviceId,
+                sequenceNumber = sequenceCounter++,
+                messageType = MessageType.READ_RECEIPT,
+                plaintext = originalMessageId.toByteArray(Charsets.UTF_8),
+                encryptionKey = outboundKey
+            )
+
+            val json = envelope.toJson()
+            if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+        }
+    }
+
+    fun markAllIncomingAsRead() {
+        scope.launch {
+            val unread = database.messageDao().getUnreadIncomingMessages()
+            if (unread.isNotEmpty()) {
+                database.messageDao().markAllIncomingAsRead()
+                for (msg in unread) {
+                    sendReadReceipt(msg.id)
+                }
+            }
+        }
+    }
+
+    fun sendNameExchange() {
+        scope.launch {
+            val myName = secureStorage.getMyDisplayName() ?: return@launch
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
+            val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
+
+            val payload = JSONObject().put("displayName", myName).toString()
+            val envelope = MessageEnvelope.pack(
+                senderDeviceId = localDeviceId,
+                recipientDeviceId = peerDeviceId,
+                sequenceNumber = sequenceCounter++,
+                messageType = MessageType.NAME_EXCHANGE,
+                plaintext = payload.toByteArray(Charsets.UTF_8),
+                encryptionKey = outboundKey
+            )
+
+            val json = envelope.toJson()
+            if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+        }
+    }
+
+    private fun resendPendingOutboundMessages() {
+        scope.launch {
+            val pending = database.messageDao().getPendingOutboundMessages()
+            for (msg in pending) {
+                if (msg.messageType == "TEXT") {
+                    val decrypted = decryptLocalContent(msg.encryptedContent, msg.nonce, msg.authTag)
+                    val localDeviceId = secureStorage.getLocalDeviceId()
+                    val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
+                    val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
+
+                    val envelope = MessageEnvelope.pack(
+                        senderDeviceId = localDeviceId,
+                        recipientDeviceId = peerDeviceId,
+                        sequenceNumber = sequenceCounter++,
+                        messageType = MessageType.TEXT,
+                        plaintext = decrypted.toByteArray(Charsets.UTF_8),
+                        encryptionKey = outboundKey,
+                        messageId = msg.id,
+                        timestamp = msg.timestamp
+                    )
+
+                    val json = envelope.toJson()
+                    if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                        signalingClient.sendE2eeEnvelope(json)
+                    }
+                }
+            }
         }
     }
 

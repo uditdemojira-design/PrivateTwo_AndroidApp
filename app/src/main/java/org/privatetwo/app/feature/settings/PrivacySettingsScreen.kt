@@ -85,6 +85,18 @@ fun PrivacySettingsScreen(
                 }
             )
 
+            var chatLock by remember { mutableStateOf(secureStorage.isChatLockEnabled) }
+            SettingSwitchItem(
+                icon = Icons.Default.Lock,
+                title = "1-to-1 Chat Lock",
+                subtitle = "Require fingerprint or device password/PIN before opening the chat window.",
+                checked = chatLock,
+                onCheckedChange = {
+                    chatLock = it
+                    secureStorage.isChatLockEnabled = it
+                }
+            )
+
             SettingSwitchItem(
                 icon = Icons.Default.NotificationsOff,
                 title = "Stealth Notifications",

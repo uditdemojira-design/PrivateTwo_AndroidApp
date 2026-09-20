@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,12 +21,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import org.privatetwo.app.core.webrtc.WebRtcCallState
 import org.privatetwo.app.core.webrtc.WebRtcSessionManager
 import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
@@ -46,13 +53,19 @@ fun CallScreen(
     val isAudioMuted by viewModel.isAudioMuted.collectAsState()
     val isVideoEnabled by viewModel.isVideoEnabled.collectAsState()
     val isSpeakerphoneOn by viewModel.isSpeakerphoneOn.collectAsState()
-    val isEnhanceModeEnabled by viewModel.isEnhanceModeEnabled.collectAsState()
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val localVideoTrack by viewModel.localVideoTrack.collectAsState()
     val callDurationSeconds by viewModel.callDurationSeconds.collectAsState()
 
     var isManualBlackoutActive by remember { mutableStateOf(false) }
     val isTiltActive by rememberAntiPeepTiltState(enabled = isAntiPeepTiltEnabled)
+    var isEnhanceModeEnabled by remember { mutableStateOf(false) }
+    var isFrontCamera by remember { mutableStateOf(true) }
+
+    // Movable & Swappable PiP states
+    var isScreenSwapped by remember { mutableStateOf(false) }
+    var pipOffsetX by remember { mutableFloatStateOf(0f) }
+    var pipOffsetY by remember { mutableFloatStateOf(0f) }
 
     val context = LocalContext.current
     val activity = remember(context) {
@@ -105,36 +118,56 @@ fun CallScreen(
                 .background(Color.Black)
         ) {
         if (isVideoCall && remoteVideoTrack != null) {
-            // Connected remote video full screen
-            WebRtcVideoView(
-                videoTrack = remoteVideoTrack!!,
-                eglContext = webRtcSessionManager.eglBase.eglBaseContext,
-                modifier = Modifier.fillMaxSize()
-            )
+            val mainVideoTrack = if (isScreenSwapped) localVideoTrack else remoteVideoTrack
+            val pipVideoTrack = if (isScreenSwapped) remoteVideoTrack else localVideoTrack
+            val isMainMirror = isScreenSwapped && isFrontCamera
+            val isPipMirror = !isScreenSwapped && isFrontCamera
 
-            // Local user PIP preview in top-right corner
-            if (localVideoTrack != null && isVideoEnabled) {
+            // Connected full screen video
+            if (mainVideoTrack != null) {
+                WebRtcVideoView(
+                    videoTrack = mainVideoTrack,
+                    eglContext = webRtcSessionManager.eglBase.eglBaseContext,
+                    isMirror = isMainMirror,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // Draggable & Tappable PIP preview
+            if (pipVideoTrack != null && (isScreenSwapped || isVideoEnabled)) {
                 Box(
                     modifier = Modifier
+                        .offset { IntOffset(pipOffsetX.roundToInt(), pipOffsetY.roundToInt()) }
                         .align(Alignment.TopEnd)
-                        .padding(top = 48.dp, end = 16.dp)
-                        .size(110.dp, 160.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .padding(top = 54.dp, end = 16.dp)
+                        .size(116.dp, 168.dp)
+                        .shadow(8.dp, RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(Color.DarkGray)
                         .then(
                             if (isEnhanceModeEnabled) {
                                 Modifier.border(
                                     width = 2.dp,
                                     color = Color(0xFFFFD54F),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(14.dp)
                                 )
                             } else Modifier
                         )
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                pipOffsetX += dragAmount.x
+                                pipOffsetY += dragAmount.y
+                            }
+                        }
+                        .clickable {
+                            isScreenSwapped = !isScreenSwapped
+                        }
                 ) {
                     WebRtcVideoView(
-                        videoTrack = localVideoTrack!!,
+                        videoTrack = pipVideoTrack,
                         eglContext = webRtcSessionManager.eglBase.eglBaseContext,
-                        isMirror = true,
+                        isMirror = isPipMirror,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -318,7 +351,7 @@ fun CallScreen(
             ) {
                 IconButton(
                     onClick = { viewModel.toggleMute() },
-                    colors = IconButtonDefaults.filledIconButtonColors(
+                    colors = IconButtonDefaults.iconButtonColors(
                         containerColor = if (isAudioMuted) Color.Red else Color.DarkGray
                     ),
                     modifier = Modifier.size(48.dp)
@@ -332,7 +365,7 @@ fun CallScreen(
 
                 IconButton(
                     onClick = { viewModel.toggleSpeaker() },
-                    colors = IconButtonDefaults.filledIconButtonColors(
+                    colors = IconButtonDefaults.iconButtonColors(
                         containerColor = if (isSpeakerphoneOn) MaterialTheme.colorScheme.primary else Color.DarkGray
                     ),
                     modifier = Modifier.size(48.dp)
@@ -347,7 +380,7 @@ fun CallScreen(
                 if (isVideoCall) {
                     IconButton(
                         onClick = { viewModel.toggleVideo() },
-                        colors = IconButtonDefaults.filledIconButtonColors(
+                        colors = IconButtonDefaults.iconButtonColors(
                             containerColor = if (!isVideoEnabled) Color.Red else Color.DarkGray
                         ),
                         modifier = Modifier.size(48.dp)
@@ -361,7 +394,7 @@ fun CallScreen(
 
                     IconButton(
                         onClick = { viewModel.switchCamera() },
-                        colors = IconButtonDefaults.filledIconButtonColors(
+                        colors = IconButtonDefaults.iconButtonColors(
                             containerColor = Color.DarkGray
                         ),
                         modifier = Modifier.size(48.dp)
@@ -376,7 +409,7 @@ fun CallScreen(
                     // WhatsApp-style Low Light & Max Brightness Boost toggle
                     IconButton(
                         onClick = { viewModel.toggleEnhanceMode() },
-                        colors = IconButtonDefaults.filledIconButtonColors(
+                        colors = IconButtonDefaults.iconButtonColors(
                             containerColor = if (isEnhanceModeEnabled) Color(0xFFFFB300) else Color.DarkGray
                         ),
                         modifier = Modifier.size(48.dp)
@@ -391,7 +424,7 @@ fun CallScreen(
 
                 IconButton(
                     onClick = { isManualBlackoutActive = true },
-                    colors = IconButtonDefaults.filledIconButtonColors(
+                    colors = IconButtonDefaults.iconButtonColors(
                         containerColor = Color.DarkGray
                     ),
                     modifier = Modifier.size(48.dp)
@@ -405,7 +438,7 @@ fun CallScreen(
 
                 IconButton(
                     onClick = { viewModel.endCall() },
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFD32F2F)),
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xFFD32F2F)),
                     modifier = Modifier.size(54.dp)
                 ) {
                     Icon(

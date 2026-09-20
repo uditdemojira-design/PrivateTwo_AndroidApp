@@ -10,7 +10,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import android.media.MediaScannerConnection
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,6 +45,12 @@ import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
 import org.privatetwo.app.feature.privacy.PrivacyControlsBottomSheet
 import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
+import android.content.Intent
+import android.os.Environment
+import android.widget.Toast
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -118,11 +128,25 @@ fun ChatScreen(
         }
     }
 
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            val inputStream = context.contentResolver.openInputStream(it)
+            val tempFile = File(context.cacheDir, "send_audio_${System.currentTimeMillis()}.mp3")
+            FileOutputStream(tempFile).use { out -> inputStream?.copyTo(out) }
+            viewModel.sendAudio(tempFile)
+        }
+    }
+
+    var fullScreenPhotoPath by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(messages.size, isPeerTyping) {
         val totalCount = messages.size + (if (isPeerTyping) 1 else 0)
         if (totalCount > 0) {
             listState.animateScrollToItem(totalCount - 1)
         }
+        viewModel.markAllIncomingAsRead()
     }
 
     AntiPeepShieldOverlay(
@@ -325,7 +349,6 @@ fun ChatScreen(
                                 onValueChange = {
                                     inputText = it
                                     viewModel.onInputTextChanged(it)
-                                    if (showEmojiPicker) showEmojiPicker = false
                                 },
                                 placeholder = {
                                     Text(
@@ -347,6 +370,19 @@ fun ChatScreen(
                                     unfocusedTextColor = WhatsAppText
                                 )
                             )
+
+                            // Music / Song Icon
+                            IconButton(
+                                onClick = { audioPickerLauncher.launch("audio/*") },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.MusicNote,
+                                    contentDescription = "Send Song",
+                                    tint = WhatsAppTime,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
 
                             // Attachment Clip Icon
                             IconButton(
@@ -388,7 +424,6 @@ fun ChatScreen(
                                 if (inputText.isNotBlank()) {
                                     viewModel.sendMessage(inputText)
                                     inputText = ""
-                                    showEmojiPicker = false
                                 }
                             },
                             enabled = inputText.isNotBlank()
@@ -480,6 +515,7 @@ fun ChatScreen(
                         MessageBubble(
                             message = message,
                             isStealthMaskActive = isStealthMaskActive,
+                            onPhotoClick = { fullScreenPhotoPath = it },
                             onRetry = { viewModel.retryMessage(message.id) },
                             onDelete = { viewModel.deleteMessage(message.id) }
                         )
@@ -538,6 +574,13 @@ fun ChatScreen(
                     isManualBlackoutActive = true
                 },
                 onDismiss = { showPrivacySheet = false }
+            )
+        }
+
+        if (fullScreenPhotoPath != null) {
+            FullscreenPhotoDialog(
+                photoPath = fullScreenPhotoPath!!,
+                onDismiss = { fullScreenPhotoPath = null }
             )
         }
     }
@@ -632,11 +675,13 @@ fun isSingleOrDoubleEmoji(text: String): Boolean {
 fun MessageBubble(
     message: ChatMessage,
     isStealthMaskActive: Boolean = false,
+    onPhotoClick: ((String) -> Unit)? = null,
     onRetry: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isOutgoing = !message.isIncoming
     val alignment = if (isOutgoing) Alignment.End else Alignment.Start
+    val context = LocalContext.current
 
     var isTemporarilyRevealed by remember { mutableStateOf(false) }
     LaunchedEffect(isTemporarilyRevealed) {
@@ -751,11 +796,25 @@ fun MessageBubble(
                             )
                         }
                     } else {
-                        if (message.messageType == "PHOTO" && message.mediaLocalPath != null) {
+                        val isPhoto = (message.messageType == "PHOTO" ||
+                            (message.mediaLocalPath != null && (
+                                message.mediaLocalPath.endsWith(".jpg", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".jpeg", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".png", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".webp", ignoreCase = true)
+                            ))) && message.mediaLocalPath != null
+
+                        if (isPhoto) {
                             val bitmap = remember(message.mediaLocalPath) {
                                 try {
-                                    BitmapFactory.decodeFile(message.mediaLocalPath)
-                                } catch (e: Exception) {
+                                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                    BitmapFactory.decodeFile(message.mediaLocalPath, options)
+                                    var sample = 1
+                                    while (options.outWidth / sample > 1200 || options.outHeight / sample > 1200) {
+                                        sample *= 2
+                                    }
+                                    BitmapFactory.decodeFile(message.mediaLocalPath, BitmapFactory.Options().apply { inSampleSize = sample })
+                                } catch (e: Throwable) {
                                     null
                                 }
                             }
@@ -766,12 +825,22 @@ fun MessageBubble(
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(max = 260.dp)
+                                        .heightIn(max = 280.dp)
                                         .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            onPhotoClick?.invoke(message.mediaLocalPath!!)
+                                        }
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
-                        } else if (message.messageType == "FILE") {
+                        } else if (message.messageType == "AUDIO") {
+                            AudioPlayerBubble(
+                                filePath = message.mediaLocalPath,
+                                fileName = message.mediaFileName ?: "Audio Song",
+                                fileSize = message.mediaFileSize,
+                                isOutgoing = isOutgoing
+                            )
+                        } else if (message.messageType == "FILE" || (message.mediaLocalPath != null && !isPhoto)) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0x22000000),
@@ -785,12 +854,58 @@ fun MessageBubble(
                                     modifier = Modifier.padding(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.InsertDriveFile,
+                                        imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                                         contentDescription = "File",
                                         tint = WhatsAppTypingGreen,
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clickable {
+                                                if (message.mediaLocalPath != null) {
+                                                    try {
+                                                        val file = File(message.mediaLocalPath)
+                                                        if (file.exists()) {
+                                                            val uri = FileProvider.getUriForFile(
+                                                                context,
+                                                                "${context.packageName}.fileprovider",
+                                                                file
+                                                            )
+                                                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                                setDataAndType(uri, "*/*")
+                                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                            }
+                                                            context.startActivity(Intent.createChooser(intent, "Open file with"))
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(context, "Cannot open: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
                                     )
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                if (message.mediaLocalPath != null) {
+                                                    try {
+                                                        val file = File(message.mediaLocalPath)
+                                                        if (file.exists()) {
+                                                            val uri = FileProvider.getUriForFile(
+                                                                context,
+                                                                "${context.packageName}.fileprovider",
+                                                                file
+                                                            )
+                                                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                                setDataAndType(uri, "*/*")
+                                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                            }
+                                                            context.startActivity(Intent.createChooser(intent, "Open file with"))
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(context, "Cannot open: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
+                                    ) {
                                         Text(
                                             text = message.mediaFileName ?: "File",
                                             color = WhatsAppText,
@@ -800,9 +915,46 @@ fun MessageBubble(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB",
+                                            text = "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • Tap to open",
                                             color = WhatsAppTime,
                                             style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+
+                                    // Direct Download / Save Button
+                                    IconButton(
+                                        onClick = {
+                                            if (message.mediaLocalPath != null) {
+                                                try {
+                                                    val srcFile = File(message.mediaLocalPath)
+                                                    if (srcFile.exists()) {
+                                                        val destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                                        if (!destDir.exists()) destDir.mkdirs()
+                                                        val destName = message.mediaFileName ?: srcFile.name
+                                                        val destFile = File(destDir, destName)
+                                                        srcFile.copyTo(destFile, overwrite = true)
+                                                        MediaScannerConnection.scanFile(
+                                                            context,
+                                                            arrayOf(destFile.absolutePath),
+                                                            null,
+                                                            null
+                                                        )
+                                                        Toast.makeText(context, "Saved to Downloads: ${destFile.name}", Toast.LENGTH_LONG).show()
+                                                    } else {
+                                                        Toast.makeText(context, "File not available locally", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Download File",
+                                            tint = WhatsAppTypingGreen,
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 }
@@ -874,10 +1026,19 @@ fun StatusTick(status: DeliveryStatus, onRetry: (() -> Unit)? = null) {
             )
         }
         DeliveryStatus.DELIVERED -> {
-            // WhatsApp Cyan Double Checkmark
+            // WhatsApp Grey Double Checkmark
             Icon(
                 imageVector = Icons.Default.DoneAll,
                 contentDescription = "Delivered",
+                tint = WhatsAppTime,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+        DeliveryStatus.READ -> {
+            // WhatsApp Cyan / Blue Double Checkmark
+            Icon(
+                imageVector = Icons.Default.DoneAll,
+                contentDescription = "Read",
                 tint = WhatsAppCheckCyan,
                 modifier = Modifier.size(15.dp)
             )
@@ -904,4 +1065,261 @@ fun StatusTick(status: DeliveryStatus, onRetry: (() -> Unit)? = null) {
             }
         }
     }
+}
+
+@Composable
+fun FullscreenPhotoDialog(
+    photoPath: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val bitmap = remember(photoPath) {
+        try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(photoPath, options)
+            var sample = 1
+            while (options.outWidth / sample > 2048 || options.outHeight / sample > 2048) {
+                sample *= 2
+            }
+            BitmapFactory.decodeFile(photoPath, BitmapFactory.Options().apply { inSampleSize = sample })
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Full photo",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        )
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                if (scale > 1f) {
+                                    offsetX += pan.x
+                                    offsetY += pan.y
+                                } else {
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                }
+                            }
+                        },
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Text(
+                    text = "Cannot load image preview",
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+
+            // Top Bar with Close/Back & Save to Gallery Buttons
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(top = 16.dp, start = 16.dp, end = 16.dp)
+                    .align(Alignment.TopCenter),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
+
+                Button(
+                    onClick = {
+                        try {
+                            val srcFile = File(photoPath)
+                            if (srcFile.exists()) {
+                                val destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                                if (!destDir.exists()) destDir.mkdirs()
+                                val destFile = File(destDir, "PrivateTwo_${System.currentTimeMillis()}.jpg")
+                                srcFile.copyTo(destFile, overwrite = true)
+                                MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(destFile.absolutePath),
+                                    arrayOf("image/jpeg"),
+                                    null
+                                )
+                                Toast.makeText(context, "Saved to Gallery / Pictures!", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppTypingGreen)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF111B21), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save to Gallery", color = Color(0xFF111B21), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AudioPlayerBubble(
+    filePath: String?,
+    fileName: String,
+    fileSize: Long,
+    isOutgoing: Boolean
+) {
+    val context = LocalContext.current
+    var isPlaying by remember { mutableStateOf(false) }
+    var currentProgress by remember { mutableFloatStateOf(0f) }
+    var durationMs by remember { mutableIntStateOf(0) }
+    var currentPosMs by remember { mutableIntStateOf(0) }
+    val mediaPlayer = remember { android.media.MediaPlayer() }
+
+    DisposableEffect(filePath) {
+        onDispose {
+            try {
+                if (mediaPlayer.isPlaying) mediaPlayer.stop()
+                mediaPlayer.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            try {
+                if (mediaPlayer.isPlaying) {
+                    currentPosMs = mediaPlayer.currentPosition
+                    if (durationMs > 0) {
+                        currentProgress = (currentPosMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                    }
+                }
+            } catch (_: Exception) {}
+            kotlinx.coroutines.delay(250)
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0x22000000),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = WhatsAppTypingGreen,
+                modifier = Modifier.size(42.dp)
+            ) {
+                IconButton(onClick = {
+                    if (filePath == null) return@IconButton
+                    val file = File(filePath)
+                    if (!file.exists()) {
+                        Toast.makeText(context, "Audio file not found", Toast.LENGTH_SHORT).show()
+                        return@IconButton
+                    }
+                    if (isPlaying) {
+                        try {
+                            mediaPlayer.pause()
+                            isPlaying = false
+                        } catch (_: Exception) {}
+                    } else {
+                        try {
+                            mediaPlayer.reset()
+                            mediaPlayer.setDataSource(filePath)
+                            mediaPlayer.prepare()
+                            durationMs = mediaPlayer.duration
+                            mediaPlayer.setOnCompletionListener {
+                                isPlaying = false
+                                currentProgress = 0f
+                                currentPosMs = 0
+                            }
+                            mediaPlayer.start()
+                            isPlaying = true
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Cannot play audio: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = Color(0xFF111B21),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = fileName,
+                    color = WhatsAppText,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { currentProgress },
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    color = WhatsAppTypingGreen,
+                    trackColor = Color(0x44FFFFFF)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = formatAudioTime(currentPosMs),
+                        color = WhatsAppTime,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = if (durationMs > 0) formatAudioTime(durationMs) else "${(fileSize / 1024).coerceAtLeast(1)} KB",
+                        color = WhatsAppTime,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatAudioTime(ms: Int): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
 }

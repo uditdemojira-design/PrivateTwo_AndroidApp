@@ -65,7 +65,8 @@ class FileTransferManager(
     data class CompletedTransfer(
         val transferId: String,
         val file: File,
-        val isPhoto: Boolean
+        val isPhoto: Boolean,
+        val isAudio: Boolean = false
     )
 
     data class IncomingFileAssembly(
@@ -75,6 +76,7 @@ class FileTransferManager(
         val totalChunks: Int,
         val expectedChecksum: String,
         val isPhoto: Boolean,
+        val isAudio: Boolean = false,
         val tempFile: File,
         var receivedChunks: Int = 0
     )
@@ -82,6 +84,7 @@ class FileTransferManager(
     suspend fun sendFile(
         file: File,
         isPhoto: Boolean,
+        isAudio: Boolean = false,
         transferId: String = UUID.randomUUID().toString(),
         nextSequenceNumber: () -> Long,
         onChunkReady: suspend (MessageEnvelope) -> Unit
@@ -99,7 +102,7 @@ class FileTransferManager(
             id = transferId,
             fileName = sanitizeFileName(file.name),
             fileSize = totalSize,
-            mimeType = if (isPhoto) "image/jpeg" else "application/octet-stream",
+            mimeType = if (isPhoto) "image/jpeg" else if (isAudio) "audio/mpeg" else "application/octet-stream",
             checksumSha256 = checksumSha256,
             totalChunks = totalChunks,
             completedChunks = 0,
@@ -117,13 +120,14 @@ class FileTransferManager(
             .put("totalChunks", totalChunks)
             .put("checksum", checksumSha256)
             .put("isPhoto", isPhoto)
+            .put("isAudio", isAudio)
             .toString()
 
         val headerEnvelope = MessageEnvelope.pack(
             senderDeviceId = localDeviceId,
             recipientDeviceId = peerDeviceId,
             sequenceNumber = nextSequenceNumber(),
-            messageType = if (isPhoto) MessageType.PHOTO_HEADER else MessageType.FILE_HEADER,
+            messageType = if (isPhoto) MessageType.PHOTO_HEADER else if (isAudio) MessageType.AUDIO_HEADER else MessageType.FILE_HEADER,
             plaintext = headerJson.toByteArray(Charsets.UTF_8),
             encryptionKey = encryptionKey
         )
@@ -147,7 +151,7 @@ class FileTransferManager(
                     senderDeviceId = localDeviceId,
                     recipientDeviceId = peerDeviceId,
                     sequenceNumber = nextSequenceNumber(),
-                    messageType = if (isPhoto) MessageType.PHOTO_CHUNK else MessageType.FILE_CHUNK,
+                    messageType = if (isPhoto) MessageType.PHOTO_CHUNK else if (isAudio) MessageType.AUDIO_CHUNK else MessageType.FILE_CHUNK,
                     plaintext = chunkPayload.toByteArray(Charsets.UTF_8),
                     encryptionKey = encryptionKey
                 )
@@ -173,6 +177,7 @@ class FileTransferManager(
         val totalChunks = json.getInt("totalChunks")
         val checksum = json.getString("checksum")
         val isPhoto = json.optBoolean("isPhoto", false)
+        val isAudio = json.optBoolean("isAudio", false)
 
         val tempFile = File(transfersDir, "${transferId}.part")
         if (tempFile.exists()) tempFile.delete()
@@ -184,6 +189,7 @@ class FileTransferManager(
             totalChunks = totalChunks,
             expectedChecksum = checksum,
             isPhoto = isPhoto,
+            isAudio = isAudio,
             tempFile = tempFile,
             receivedChunks = 0
         )
@@ -193,7 +199,7 @@ class FileTransferManager(
             id = transferId,
             fileName = safeFileName,
             fileSize = totalSize,
-            mimeType = if (isPhoto) "image/jpeg" else "application/octet-stream",
+            mimeType = if (isPhoto) "image/jpeg" else if (isAudio) "audio/mpeg" else "application/octet-stream",
             checksumSha256 = checksum,
             totalChunks = totalChunks,
             completedChunks = 0,
@@ -234,9 +240,15 @@ class FileTransferManager(
                 return@withContext null
             }
 
-            val finalFile = File(transfersDir, "${System.currentTimeMillis()}_${assembly.fileName}")
+            val extension = when {
+                assembly.isPhoto -> if (assembly.fileName.endsWith(".jpg", true) || assembly.fileName.endsWith(".jpeg", true) || assembly.fileName.endsWith(".png", true)) "" else ".jpg"
+                assembly.isAudio -> if (assembly.fileName.endsWith(".mp3", true) || assembly.fileName.endsWith(".m4a", true) || assembly.fileName.endsWith(".wav", true) || assembly.fileName.endsWith(".aac", true)) "" else ".mp3"
+                else -> ""
+            }
+            val finalFile = File(transfersDir, "${System.currentTimeMillis()}_${assembly.fileName}$extension")
             assembly.tempFile.renameTo(finalFile)
             val wasPhoto = assembly.isPhoto
+            val wasAudio = assembly.isAudio
             incomingAssemblies.remove(transferId)
 
             val finalEntity = database.transferDao().getTransferById(transferId)?.copy(
@@ -249,7 +261,7 @@ class FileTransferManager(
             }
 
             _transferState.value = TransferProgressState.Completed(transferId, finalFile.absolutePath)
-            return@withContext CompletedTransfer(transferId, finalFile, wasPhoto)
+            return@withContext CompletedTransfer(transferId, finalFile, wasPhoto, wasAudio)
         }
 
         null

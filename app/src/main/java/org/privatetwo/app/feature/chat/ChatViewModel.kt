@@ -23,6 +23,11 @@ class ChatViewModel(
 
     val signalingState: StateFlow<SignalingConnectionState> = signalingClient.connectionState
     val isPeerTyping: StateFlow<Boolean> = chatRepository.isPeerTyping
+    val partnerDisplayName: StateFlow<String?> = chatRepository.partnerDisplayName
+
+    fun sendNameExchange() {
+        chatRepository.sendNameExchange()
+    }
 
     fun onInputTextChanged(text: String) {
         viewModelScope.launch {
@@ -76,6 +81,22 @@ class ChatViewModel(
             } catch (e: Exception) {
                 // Handled in repository
             }
+        }
+    }
+
+    fun sendAudio(audioFile: File) {
+        viewModelScope.launch {
+            try {
+                chatRepository.sendAudio(audioFile)
+            } catch (e: Exception) {
+                // Handled in repository
+            }
+        }
+    }
+
+    fun markAllIncomingAsRead() {
+        viewModelScope.launch {
+            chatRepository.markAllIncomingAsRead()
         }
     }
 

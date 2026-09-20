@@ -1,5 +1,12 @@
 package org.privatetwo.app.feature.home
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -13,8 +20,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -22,26 +33,58 @@ import androidx.compose.ui.unit.dp
 import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingConnectionState
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     secureStorage: SecureStorage,
     signalingClient: SignalingClient,
+    partnerDisplayName: String? = null,
+    onNameUpdated: (String) -> Unit = {},
     onOpenChat: () -> Unit,
     onStartAudioCall: () -> Unit,
     onStartVideoCall: () -> Unit,
     onOpenSettings: () -> Unit,
     onUnpairAndPair: () -> Unit
 ) {
+    val context = LocalContext.current
     val connectionState by signalingClient.connectionState.collectAsState()
     val peerDeviceId = remember { secureStorage.getPairedPeerDeviceId() ?: "Unknown Partner" }
 
     var showUnpairDialog by remember { mutableStateOf(false) }
-    val storedName = secureStorage.getPartnerDisplayName()
-    var partnerName by remember(storedName) { mutableStateOf(storedName) }
-    var showNamePromptDialog by remember { mutableStateOf(false) }
-    var tempNameInput by remember(partnerName) { mutableStateOf(partnerName ?: "") }
+
+    // My Display Name and Profile Picture
+    var myName by remember { mutableStateOf(secureStorage.getMyDisplayName()) }
+    var showMyNameEditDialog by remember { mutableStateOf(false) }
+    var tempMyNameInput by remember(myName) { mutableStateOf(myName ?: "") }
+
+    var profilePicPath by remember { mutableStateOf(secureStorage.profilePicturePath) }
+    val profileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                val dest = File(context.filesDir, "profile_avatar.jpg")
+                context.contentResolver.openInputStream(it)?.use { input ->
+                    dest.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                secureStorage.profilePicturePath = dest.absolutePath
+                profilePicPath = dest.absolutePath
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // Partner Name
+    val storedPartnerName = secureStorage.getPartnerDisplayName()
+    val effectivePartnerName = partnerDisplayName ?: storedPartnerName ?: "Private Partner"
+
+    // Chat Lock status
+    var isChatLockActive by remember { mutableStateOf(secureStorage.isChatLockEnabled) }
 
     Scaffold(
         topBar = {
@@ -101,6 +144,86 @@ fun MainScreen(
             // Live Status Card
             ConnectionStatusCard(connectionState = connectionState)
 
+            // User Profile Header (My Name & Avatar)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Profile Picture with Tap to Change
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .clickable { profileLauncher.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val bitmap = remember(profilePicPath) {
+                            profilePicPath?.let {
+                                try { BitmapFactory.decodeFile(it) } catch (e: Exception) { null }
+                            }
+                        }
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Profile Picture",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.CameraAlt,
+                                contentDescription = "Upload Profile Photo",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "MY PROFILE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = myName ?: "Tap to set name",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Tap photo to change avatar",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        tempMyNameInput = myName ?: ""
+                        showMyNameEditDialog = true
+                    }) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit My Name",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
             // Partner Info Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -124,42 +247,25 @@ fun MainScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "PAIRED & VERIFIED PARTNER",
+                            text = "PAIRED PARTNER",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF2E7D32)
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Chat Display Name",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = partnerName ?: "Private Partner",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (partnerName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        IconButton(onClick = {
-                            tempNameInput = partnerName ?: ""
-                            showNamePromptDialog = true
-                        }) {
-                            Icon(
-                                Icons.Default.Edit,
-                                contentDescription = "Edit Name",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                    Column {
+                        Text(
+                            text = "Partner Display Name",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = effectivePartnerName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
 
                     Column {
@@ -202,6 +308,55 @@ fun MainScreen(
                 }
             }
 
+            // Chat Lock Option Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Fingerprint,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Lock Chat (Fingerprint / PIN)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Prompt phone password or fingerprint when opening chat",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isChatLockActive,
+                        onCheckedChange = {
+                            isChatLockActive = it
+                            secureStorage.isChatLockEnabled = it
+                        }
+                    )
+                }
+            }
+
             // Main Primary Action: Open Chat
             Card(
                 onClick = onOpenChat,
@@ -239,14 +394,27 @@ fun MainScreen(
                             }
                         }
                         Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "Open 1-to-1 Chat",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                if (isChatLockActive) {
+                                    Icon(
+                                        Icons.Default.Lock,
+                                        contentDescription = "Locked",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                             Text(
-                                text = "Open 1-to-1 Chat",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                text = "Messages, photos & encrypted files",
+                                text = if (isChatLockActive) "Protected with phone password / fingerprint" else "Messages, audio songs, photos & files",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                             )
@@ -381,6 +549,9 @@ fun MainScreen(
                     )
                 }
             }
+
+            // Essential bottom padding for small screens to scroll freely past system navigation bar
+            Spacer(modifier = Modifier.height(72.dp))
         }
 
         if (showUnpairDialog) {
@@ -411,9 +582,9 @@ fun MainScreen(
             )
         }
 
-        if (showNamePromptDialog) {
+        if (showMyNameEditDialog) {
             AlertDialog(
-                onDismissRequest = { showNamePromptDialog = false },
+                onDismissRequest = { showMyNameEditDialog = false },
                 icon = {
                     Icon(
                         Icons.Default.Person,
@@ -424,7 +595,7 @@ fun MainScreen(
                 },
                 title = {
                     Text(
-                        text = "Edit Chat Name",
+                        text = "Edit Your Name",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -432,14 +603,14 @@ fun MainScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "Enter a name or nickname to display inside chat and call screens:",
+                            text = "This is the name your partner will see on their screen:",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         OutlinedTextField(
-                            value = tempNameInput,
-                            onValueChange = { tempNameInput = it },
-                            label = { Text("Display Name") },
+                            value = tempMyNameInput,
+                            onValueChange = { tempMyNameInput = it },
+                            label = { Text("Your Display Name") },
                             placeholder = { Text("e.g. Rahul, Priya, Alex") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
@@ -448,21 +619,19 @@ fun MainScreen(
                 },
                 confirmButton = {
                     Button(onClick = {
-                        val trimmed = tempNameInput.trim()
+                        val trimmed = tempMyNameInput.trim()
                         if (trimmed.isNotBlank()) {
-                            secureStorage.setPartnerDisplayName(trimmed)
-                            partnerName = trimmed
-                        } else {
-                            secureStorage.setPartnerDisplayName(null)
-                            partnerName = null
+                            secureStorage.setMyDisplayName(trimmed)
+                            myName = trimmed
+                            onNameUpdated(trimmed)
                         }
-                        showNamePromptDialog = false
+                        showMyNameEditDialog = false
                     }) {
                         Text("Save Name")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showNamePromptDialog = false }) {
+                    TextButton(onClick = { showMyNameEditDialog = false }) {
                         Text("Cancel")
                     }
                 }

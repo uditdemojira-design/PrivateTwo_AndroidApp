@@ -7,6 +7,7 @@ enum class DeliveryStatus {
     SENDING,
     SENT,
     DELIVERED,
+    READ,
     FAILED
 }
 

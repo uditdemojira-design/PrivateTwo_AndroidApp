@@ -20,6 +20,15 @@ interface MessageDao {
     @Query("UPDATE messages SET deliveryStatus = :status WHERE id = :id")
     suspend fun updateDeliveryStatus(id: String, status: DeliveryStatus)
 
+    @Query("SELECT * FROM messages WHERE isIncoming = 1 AND deliveryStatus != 'READ'")
+    suspend fun getUnreadIncomingMessages(): List<MessageEntity>
+
+    @Query("UPDATE messages SET deliveryStatus = 'READ' WHERE isIncoming = 1 AND deliveryStatus != 'READ'")
+    suspend fun markAllIncomingAsRead()
+
+    @Query("SELECT * FROM messages WHERE isIncoming = 0 AND deliveryStatus = 'SENT'")
+    suspend fun getPendingOutboundMessages(): List<MessageEntity>
+
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteMessage(id: String)
 

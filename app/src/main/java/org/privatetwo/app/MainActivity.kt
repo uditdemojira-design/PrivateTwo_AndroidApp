@@ -151,7 +151,7 @@ class MainActivity : FragmentActivity() {
 
                     // One-time Name Setup Prompt at the root level (shown once on initial entry if name doesn't exist)
                     var showNamePromptDialog by remember {
-                        mutableStateOf(app.secureStorage.getPartnerDisplayName().isNullOrBlank() && !app.secureStorage.hasPromptedName())
+                        mutableStateOf(app.secureStorage.getMyDisplayName().isNullOrBlank() && !app.secureStorage.hasPromptedName())
                     }
 
                     if (showNamePromptDialog) {
@@ -179,7 +179,7 @@ class MainActivity : FragmentActivity() {
                             text = {
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Text(
-                                        text = "Enter a name to display inside chat & calls. Once saved, you will never be prompted again.",
+                                        text = "Enter a name to display inside chat & calls. Your partner will see this name on their screen.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -198,7 +198,8 @@ class MainActivity : FragmentActivity() {
                                     onClick = {
                                         val trimmed = nameInput.trim()
                                         if (trimmed.isNotBlank()) {
-                                            app.secureStorage.setPartnerDisplayName(trimmed)
+                                            app.secureStorage.setMyDisplayName(trimmed)
+                                            chatViewModel.sendNameExchange()
                                         }
                                         app.secureStorage.setHasPromptedName(true)
                                         showNamePromptDialog = false
@@ -221,13 +222,28 @@ class MainActivity : FragmentActivity() {
                     }
 
                     val callState by callViewModel.callState.collectAsState()
+                    val livePartnerName by chatViewModel.partnerDisplayName.collectAsState()
 
                     val navRoute by pendingNavRoute
                     LaunchedEffect(navRoute) {
                         navRoute?.let { target ->
                             if (isPaired) {
-                                navController.navigate(target) {
-                                    launchSingleTop = true
+                                if (target == "chat" && app.secureStorage.isChatLockEnabled) {
+                                    BiometricAuthHelper.showBiometricPrompt(
+                                        activity = this@MainActivity,
+                                        title = "Unlock Private Chat",
+                                        subtitle = "Verify fingerprint or phone password to open chat",
+                                        onSuccess = {
+                                            navController.navigate(target) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onError = {}
+                                    )
+                                } else {
+                                    navController.navigate(target) {
+                                        launchSingleTop = true
+                                    }
                                 }
                             }
                             pendingNavRoute.value = null
@@ -286,8 +302,24 @@ class MainActivity : FragmentActivity() {
                             MainScreen(
                                 secureStorage = app.secureStorage,
                                 signalingClient = app.signalingClient,
+                                partnerDisplayName = livePartnerName,
+                                onNameUpdated = {
+                                    chatViewModel.sendNameExchange()
+                                },
                                 onOpenChat = {
-                                    navController.navigate("chat")
+                                    if (app.secureStorage.isChatLockEnabled) {
+                                        BiometricAuthHelper.showBiometricPrompt(
+                                            activity = this@MainActivity,
+                                            title = "Unlock Private Chat",
+                                            subtitle = "Verify fingerprint or phone password to open chat",
+                                            onSuccess = {
+                                                navController.navigate("chat")
+                                            },
+                                            onError = {}
+                                        )
+                                    } else {
+                                        navController.navigate("chat")
+                                    }
                                 },
                                 onStartAudioCall = {
                                     runWithPermissions(listOf(Manifest.permission.RECORD_AUDIO)) {
@@ -317,7 +349,7 @@ class MainActivity : FragmentActivity() {
                         composable("chat") {
                             ChatScreen(
                                 viewModel = chatViewModel,
-                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                partnerDisplayName = livePartnerName,
                                 secureStorage = app.secureStorage,
                                 onNavigateBack = {
                                     navController.popBackStack()
@@ -345,7 +377,7 @@ class MainActivity : FragmentActivity() {
                                 viewModel = callViewModel,
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = false,
-                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                partnerDisplayName = livePartnerName,
                                 isAntiPeepTiltEnabled = app.secureStorage.isAntiPeepTiltEnabled,
                                 onCallEnded = {
                                     navController.popBackStack()
@@ -358,7 +390,7 @@ class MainActivity : FragmentActivity() {
                                 viewModel = callViewModel,
                                 webRtcSessionManager = app.webRtcSessionManager,
                                 isVideoCall = true,
-                                partnerDisplayName = app.secureStorage.getPartnerDisplayName(),
+                                partnerDisplayName = livePartnerName,
                                 isAntiPeepTiltEnabled = app.secureStorage.isAntiPeepTiltEnabled,
                                 onCallEnded = {
                                     navController.popBackStack()
@@ -368,10 +400,9 @@ class MainActivity : FragmentActivity() {
 
                         composable("incoming_call") {
                             val isIncomingVideo by callViewModel.isIncomingCallVideo.collectAsState()
-                            val partnerDisplayName = app.secureStorage.getPartnerDisplayName()
                             IncomingCallScreen(
                                 isVideo = isIncomingVideo,
-                                partnerDisplayName = partnerDisplayName,
+                                partnerDisplayName = livePartnerName,
                                 onAccept = {
                                     if (isIncomingVideo) {
                                         runWithPermissions(listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) {

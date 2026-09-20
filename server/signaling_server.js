@@ -57,6 +57,21 @@ const sessions = new Map();
 const wsToSession = new Map();
 const deviceIdToWs = new Map();
 const pendingPairings = new Map(); // deviceId -> { sessionId, peerDeviceId }
+const offlineQueues = new Map(); // deviceId -> Array<msg>
+
+function flushOfflineQueue(deviceId, targetWs) {
+    if (!deviceId || !targetWs || targetWs.readyState !== 1) return;
+    const queue = offlineQueues.get(deviceId);
+    if (queue && queue.length > 0) {
+        logInfo(`[Signaling] Flushing ${queue.length} queued offline message(s) to device: ${deviceId}`);
+        while (queue.length > 0) {
+            const item = queue.shift();
+            stats.totalMessagesRelayed++;
+            safeSend(targetWs, item);
+        }
+        offlineQueues.delete(deviceId);
+    }
+}
 
 function safeSend(ws, payload) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -160,6 +175,9 @@ function handleMessage(ws, msg) {
                 peerDeviceId: pending.peerDeviceId
             });
         }
+
+        // Flush any offline messages waiting for this device
+        flushOfflineQueue(deviceId, ws);
     }
 
     switch (type) {
@@ -329,6 +347,8 @@ function handleMessage(ws, msg) {
                 if (peerWs && peerWs !== ws) {
                     safeSend(peerWs, { type: 'PEER_CONNECTED', peerDeviceId: devId });
                 }
+
+                flushOfflineQueue(devId, ws);
             }
             break;
         }
@@ -368,6 +388,18 @@ function handleMessage(ws, msg) {
                 || ((session.deviceA === ws) ? session.deviceB : session.deviceA);
 
             if (!partnerWs || partnerWs.readyState !== WebSocket.OPEN) {
+                if (type === 'E2EE_ENVELOPE') {
+                    if (!offlineQueues.has(partnerDeviceId)) {
+                        offlineQueues.set(partnerDeviceId, []);
+                    }
+                    const q = offlineQueues.get(partnerDeviceId);
+                    if (q.length < 500) {
+                        q.push(msg);
+                    }
+                    logInfo(`[Signaling] Queued offline message for device ${partnerDeviceId}, queue size: ${q.length}`);
+                    safeSend(ws, { type: 'MESSAGE_QUEUED_OFFLINE', messageId: msg.messageId || 'unknown' });
+                    break;
+                }
                 return sendError(ws, 'PEER_OFFLINE', 'Partner device is currently offline');
             }
 

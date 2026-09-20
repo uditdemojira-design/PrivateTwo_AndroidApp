@@ -56,8 +56,11 @@ class SecureStorage(private val context: Context) {
         private const val KEY_INBOUND_KEY = "inbound_session_key"
         private const val KEY_IS_INITIATOR = "is_initiator"
 
+        private const val KEY_MY_DISPLAY_NAME = "my_display_name"
         private const val KEY_PARTNER_DISPLAY_NAME = "partner_display_name"
         private const val KEY_HAS_PROMPTED_NAME = "has_prompted_name"
+        private const val KEY_CHAT_LOCK_ENABLED = "chat_lock_enabled"
+        private const val KEY_PROFILE_PICTURE_PATH = "profile_picture_path"
 
         private const val KEY_ANTI_PEEP_TILT = "anti_peep_tilt_enabled"
         private const val KEY_ANTI_PEEP_SHADE = "anti_peep_shade_enabled"
@@ -255,7 +258,22 @@ class SecureStorage(private val context: Context) {
         activeOutboundSessionKey = null
     }
 
-    // --- Partner Display Name ---
+    // --- Display Names ---
+
+    fun getMyDisplayName(): String? = prefs.getString(KEY_MY_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
+        ?: prefs.getString(KEY_PARTNER_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
+
+    fun setMyDisplayName(name: String?) {
+        val trimmed = name?.trim()
+        if (trimmed.isNullOrBlank()) {
+            prefs.edit().remove(KEY_MY_DISPLAY_NAME).apply()
+        } else {
+            prefs.edit()
+                .putString(KEY_MY_DISPLAY_NAME, trimmed)
+                .putBoolean(KEY_HAS_PROMPTED_NAME, true)
+                .apply()
+        }
+    }
 
     fun getPartnerDisplayName(): String? = prefs.getString(KEY_PARTNER_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
 
@@ -266,16 +284,30 @@ class SecureStorage(private val context: Context) {
         } else {
             prefs.edit()
                 .putString(KEY_PARTNER_DISPLAY_NAME, trimmed)
-                .putBoolean(KEY_HAS_PROMPTED_NAME, true)
                 .apply()
         }
     }
 
-    fun hasPromptedName(): Boolean = prefs.getBoolean(KEY_HAS_PROMPTED_NAME, false) || !getPartnerDisplayName().isNullOrBlank()
+    fun hasPromptedName(): Boolean = prefs.getBoolean(KEY_HAS_PROMPTED_NAME, false) || !getMyDisplayName().isNullOrBlank()
 
     fun setHasPromptedName(prompted: Boolean) {
         prefs.edit().putBoolean(KEY_HAS_PROMPTED_NAME, prompted).apply()
     }
+
+    var isChatLockEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CHAT_LOCK_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CHAT_LOCK_ENABLED, value).apply()
+
+    var profilePicturePath: String?
+        get() = prefs.getString(KEY_PROFILE_PICTURE_PATH, null)?.takeIf { it.isNotBlank() }
+        set(value) {
+            val trimmed = value?.trim()
+            if (trimmed.isNullOrBlank()) {
+                prefs.edit().remove(KEY_PROFILE_PICTURE_PATH).apply()
+            } else {
+                prefs.edit().putString(KEY_PROFILE_PICTURE_PATH, trimmed).apply()
+            }
+        }
 
     // --- Privacy Settings ---
 
