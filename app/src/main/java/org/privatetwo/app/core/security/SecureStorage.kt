@@ -339,6 +339,10 @@ class SecureStorage(private val context: Context) {
         get() = prefs.getBoolean(KEY_STEALTH_MESSAGES, false)
         set(value) = prefs.edit().putBoolean(KEY_STEALTH_MESSAGES, value).apply()
 
+    var privacyFilterOpacity: Float
+        get() = prefs.getFloat("privacy_filter_opacity", 0.85f)
+        set(value) = prefs.edit().putFloat("privacy_filter_opacity", value).apply()
+
     fun getSignalingUrl(defaultUrl: String): String {
         val saved = prefs.getString("signaling_server_url", null)
         if (saved.isNullOrBlank()

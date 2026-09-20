@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -82,10 +83,10 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
                 val rollDegrees = Math.toDegrees(atan2(x.toDouble(), sqrt((y * y + z * z).toDouble())))
                 val absRoll = kotlin.math.abs(rollDegrees)
 
-                // Only trigger on heavy tilt (> 50° away from user)
-                if (!isTilted.value && absRoll > 50.0) {
+                // Only trigger on severe tilt (> 65° sideways away from user)
+                if (!isTilted.value && absRoll > 65.0) {
                     isTilted.value = true
-                } else if (isTilted.value && absRoll < 30.0) {
+                } else if (isTilted.value && absRoll < 35.0) {
                     isTilted.value = false
                 }
             }
@@ -132,36 +133,48 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
 
 /**
  * Optical Micro-Louver Polarized Filter:
- * Draws ultra-fine vertical black raster lines (1px every 3px) plus contrast darkening.
- * Looking straight (0°): Your eyes see clearly through the slits.
- * Looking from the side (>25° angle): Angular light paths are obstructed, drastically reducing text legibility.
+ * Draws ultra-dense vertical black raster lines plus heavy contrast darkening (80% - 95%).
+ * Looking straight (0°): Your eyes see through the slits clearly.
+ * Looking from the side (>25° angle): Angular light paths are fully blocked, making the screen appear solid black to bystanders.
  */
-fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.38f): Modifier {
+fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.85f): Modifier {
     if (!enabled) return this
     return this.drawWithContent {
         drawContent()
-        // Dark contrast compression tint
-        drawRect(Color.Black.copy(alpha = darkTintAlpha))
-        // Dense vertical micro-slits
+        // Deep contrast black mask directly over the screen (up to 96% blackout)
+        drawRect(Color.Black.copy(alpha = darkTintAlpha.coerceIn(0.60f, 0.96f)))
+        // Dense vertical optical micro-louvers (blocks horizontal 25°-60° side peepers)
         val width = size.width
         val height = size.height
-        val step = 3f
+        val step = 2.5f
         var x = 0f
         while (x < width) {
             drawLine(
-                color = Color.Black.copy(alpha = 0.82f),
+                color = Color.Black.copy(alpha = 0.95f),
                 start = Offset(x, 0f),
                 end = Offset(x, height),
-                strokeWidth = 1f
+                strokeWidth = 1.3f
             )
             x += step
+        }
+        // Subtle horizontal cross-slits (blocks diagonal & shoulder-angle peeping)
+        val hStep = 5.0f
+        var y = 0f
+        while (y < height) {
+            drawLine(
+                color = Color.Black.copy(alpha = 0.65f),
+                start = Offset(0f, y),
+                end = Offset(width, y),
+                strokeWidth = 1.0f
+            )
+            y += hStep
         }
     }
 }
 
 /**
  * Draggable Reading Curtain (Privacy Shade):
- * Covers screen with 88% dark curtain except a movable horizontal viewing slot (120dp high).
+ * Covers screen with 92% dark curtain except a movable horizontal viewing slot (120dp high).
  * The user drags the slot up & down to read messages one-by-one. Bystanders can't see the rest of the chat!
  */
 @Composable
@@ -186,7 +199,7 @@ fun PrivacyReadingCurtain(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(with(density) { topHeight.toDp() })
-                .background(Color.Black.copy(alpha = 0.90f))
+                .background(Color.Black.copy(alpha = 0.94f))
         )
 
         // Draggable clear viewing slot
@@ -195,7 +208,7 @@ fun PrivacyReadingCurtain(
                 .offset { IntOffset(0, slotOffsetY.roundToInt()) }
                 .fillMaxWidth()
                 .height(slotHeightDp)
-                .border(2.dp, Color(0xFF64B5F6).copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                .border(2.dp, Color(0xFF64B5F6).copy(alpha = 0.8f), RoundedCornerShape(8.dp))
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
@@ -246,7 +259,7 @@ fun PrivacyReadingCurtain(
                 .offset { IntOffset(0, bottomTop.roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { bottomHeight.toDp() })
-                .background(Color.Black.copy(alpha = 0.90f))
+                .background(Color.Black.copy(alpha = 0.94f))
         )
     }
 }
@@ -260,18 +273,27 @@ fun AntiPeepShieldOverlay(
     isTiltBlackoutActive: Boolean,
     isManualBlackoutActive: Boolean,
     isLouverFilterActive: Boolean = false,
+    louverOpacity: Float = 0.85f,
     isReadingCurtainActive: Boolean = false,
+    onDismissTilt: () -> Unit = {},
     onDismissManualBlackout: () -> Unit,
     onDismissReadingCurtain: () -> Unit = {},
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .antiPeepLouverFilter(isLouverFilterActive)
+        modifier = modifier.fillMaxSize()
     ) {
         content()
+
+        // Optical Micro-Louver Filter Overlay directly over the content
+        if (isLouverFilterActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .antiPeepLouverFilter(enabled = true, darkTintAlpha = louverOpacity)
+            )
+        }
 
         // Reading Curtain Overlay
         PrivacyReadingCurtain(
@@ -279,7 +301,7 @@ fun AntiPeepShieldOverlay(
             onClose = onDismissReadingCurtain
         )
 
-        // Emergency Tilt Alert (Only triggers on extreme tilt >50° if enabled)
+        // Emergency Tilt Alert (Only triggers on extreme tilt >65° if enabled)
         AnimatedVisibility(
             visible = isTiltBlackoutActive && !isManualBlackoutActive,
             enter = fadeIn(),
@@ -288,7 +310,8 @@ fun AntiPeepShieldOverlay(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f)),
+                    .background(Color.Black.copy(alpha = 0.96f))
+                    .clickable { onDismissTilt() },
                 contentAlignment = Alignment.Center
             ) {
                 Column(
@@ -309,9 +332,10 @@ fun AntiPeepShieldOverlay(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Hold phone straight to view.",
+                        text = "Hold phone straight to view.\nTap screen to dismiss.",
                         color = Color.LightGray,
-                        fontSize = 13.sp
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -385,6 +409,8 @@ fun PrivacyControlsBottomSheet(
     isLouverActive: Boolean,
     isCurtainActive: Boolean,
     isStealthMaskActive: Boolean,
+    currentOpacity: Float = 0.85f,
+    onOpacityChanged: (Float) -> Unit = {},
     onToggleLouver: (Boolean) -> Unit,
     onToggleCurtain: (Boolean) -> Unit,
     onToggleStealthMask: (Boolean) -> Unit,
@@ -429,20 +455,39 @@ fun PrivacyControlsBottomSheet(
 
             HorizontalDivider(color = Color(0xFF333333))
 
-            // 1. Polarized Side-Angle Blocker (Micro-Louvers)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("🛡️ Side-Angle Blocker", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                    Text("Polarized micro-louvers obscure text from side angles while keeping straight view readable.", fontSize = 12.sp, color = Color.Gray)
+            // 1. Polarized Side-Angle Blocker (Micro-Louvers & Black Screen)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("🛡️ Side-Angle Blackout Shield", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Polarized black raster blocks off-axis viewing so side-sitters only see a dark black screen.", fontSize = 12.sp, color = Color.Gray)
+                    }
+                    Switch(
+                        checked = isLouverActive,
+                        onCheckedChange = onToggleLouver
+                    )
                 }
-                Switch(
-                    checked = isLouverActive,
-                    onCheckedChange = onToggleLouver
-                )
+
+                if (isLouverActive) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Darkness:", fontSize = 12.sp, color = Color.LightGray)
+                        listOf(0.75f to "75%", 0.85f to "85% Deep", 0.93f to "93% Max").forEach { (value, label) ->
+                            FilterChip(
+                                selected = (currentOpacity == value),
+                                onClick = { onOpacityChanged(value) },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
             }
 
             // 2. Reading Curtain (Draggable Window)

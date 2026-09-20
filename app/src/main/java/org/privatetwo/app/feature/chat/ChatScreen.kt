@@ -92,8 +92,14 @@ fun ChatScreen(
     var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: false) }
     var isReadingCurtainActive by remember { mutableStateOf(secureStorage?.isAntiPeepShadeEnabled ?: false) }
     var isStealthMaskActive by remember { mutableStateOf(secureStorage?.isStealthMessagesEnabled ?: false) }
+    var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.85f) }
     var showPrivacySheet by remember { mutableStateOf(false) }
-    val isTiltActive by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
+    var isTiltDismissedLocally by remember { mutableStateOf(false) }
+    val isTiltRaw by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
+    val isTiltActive = isTiltRaw && !isTiltDismissedLocally
+    LaunchedEffect(isTiltRaw) {
+        if (!isTiltRaw) isTiltDismissedLocally = false
+    }
 
     val messages by viewModel.messages.collectAsState()
     val signalingState by viewModel.signalingState.collectAsState()
@@ -153,7 +159,9 @@ fun ChatScreen(
         isTiltBlackoutActive = isTiltActive,
         isManualBlackoutActive = isManualBlackoutActive,
         isLouverFilterActive = isLouverFilterActive,
+        louverOpacity = louverOpacity,
         isReadingCurtainActive = isReadingCurtainActive,
+        onDismissTilt = { isTiltDismissedLocally = true },
         onDismissManualBlackout = { isManualBlackoutActive = false },
         onDismissReadingCurtain = {
             isReadingCurtainActive = false
@@ -238,10 +246,15 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { showPrivacySheet = true }) {
+                        // 1-Tap Black Screen Shield Toggle
+                        IconButton(onClick = {
+                            val next = !isLouverFilterActive
+                            isLouverFilterActive = next
+                            secureStorage?.isAntiPeepLouverEnabled = next
+                        }) {
                             Icon(
                                 imageVector = Icons.Default.Shield,
-                                contentDescription = "Anti-Peep Privacy Controls",
+                                contentDescription = "Anti-Peep Privacy Shield",
                                 tint = if (isLouverFilterActive || isReadingCurtainActive || isStealthMaskActive) WhatsAppTypingGreen else Color.White
                             )
                         }
@@ -259,10 +272,58 @@ fun ChatScreen(
                             onDismissRequest = { showMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text(if (isAntiPeepTiltEnabled) "Anti-Peep Tilt: ON" else "Anti-Peep Tilt: OFF") },
+                                text = { Text(if (isLouverFilterActive) "Black Screen Shield: ON (${(louverOpacity * 100).toInt()}%)" else "Black Screen Shield: OFF") },
                                 leadingIcon = {
                                     Icon(
-                                        if (isAntiPeepTiltEnabled) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        Icons.Default.Shield,
+                                        contentDescription = null,
+                                        tint = if (isLouverFilterActive) WhatsAppTypingGreen else Color.Unspecified
+                                    )
+                                },
+                                onClick = {
+                                    val newState = !isLouverFilterActive
+                                    isLouverFilterActive = newState
+                                    secureStorage?.isAntiPeepLouverEnabled = newState
+                                    showMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isReadingCurtainActive) "Reading Curtain: ON" else "Reading Curtain: OFF") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Window,
+                                        contentDescription = null,
+                                        tint = if (isReadingCurtainActive) WhatsAppTypingGreen else Color.Unspecified
+                                    )
+                                },
+                                onClick = {
+                                    val newState = !isReadingCurtainActive
+                                    isReadingCurtainActive = newState
+                                    secureStorage?.isAntiPeepShadeEnabled = newState
+                                    showMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isStealthMaskActive) "Tap-to-Reveal (Stealth): ON" else "Tap-to-Reveal: OFF") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        tint = if (isStealthMaskActive) WhatsAppTypingGreen else Color.Unspecified
+                                    )
+                                },
+                                onClick = {
+                                    val newState = !isStealthMaskActive
+                                    isStealthMaskActive = newState
+                                    secureStorage?.isStealthMessagesEnabled = newState
+                                    showMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (isAntiPeepTiltEnabled) "Anti-Peep Tilt Alert: ON" else "Anti-Peep Tilt: OFF") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (isAntiPeepTiltEnabled) Icons.Default.Security else Icons.Default.Visibility,
                                         contentDescription = null,
                                         tint = if (isAntiPeepTiltEnabled) WhatsAppTypingGreen else Color.Unspecified
                                     )
@@ -272,6 +333,14 @@ fun ChatScreen(
                                     isAntiPeepTiltEnabled = newState
                                     secureStorage?.isAntiPeepTiltEnabled = newState
                                     showMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Anti-Peep Controls Sheet...") },
+                                leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    showPrivacySheet = true
                                 }
                             )
                             DropdownMenuItem(
@@ -466,64 +535,162 @@ fun ChatScreen(
                 .background(WhatsAppBackground)
                 .padding(paddingValues)
         ) {
-            if (messages.isEmpty() && !isPeerTyping) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Quick Privacy Strip at the top if ANY anti-peep feature is active
+                if (isLouverFilterActive || isReadingCurtainActive || isStealthMaskActive) {
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF182229),
-                        modifier = Modifier.padding(24.dp)
+                        color = Color(0xFF131D24),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = "Security",
-                                tint = WhatsAppTypingGreen,
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Text(
-                                text = "End-to-End Encrypted",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = "Messages and calls are secured with ECDH & AES-256-GCM. No one outside of this chat can read them.",
-                                color = WhatsAppTime,
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = WhatsAppTypingGreen,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isLouverFilterActive) "Black Screen" else if (isReadingCurtainActive) "Curtain" else "Tap-Reveal",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                if (isLouverFilterActive) {
+                                    listOf(0.75f to "75%", 0.85f to "85%", 0.93f to "93%").forEach { (level, label) ->
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (louverOpacity == level) WhatsAppTypingGreen else Color(0xFF24343D),
+                                            modifier = Modifier
+                                                .clickable {
+                                                    louverOpacity = level
+                                                    secureStorage?.privacyFilterOpacity = level
+                                                }
+                                                .padding(horizontal = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                color = if (louverOpacity == level) Color(0xFF111B21) else Color.LightGray,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { showPrivacySheet = true },
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Settings",
+                                        tint = Color.LightGray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        isLouverFilterActive = false
+                                        isReadingCurtainActive = false
+                                        isStealthMaskActive = false
+                                        secureStorage?.isAntiPeepLouverEnabled = false
+                                        secureStorage?.isAntiPeepShadeEnabled = false
+                                        secureStorage?.isStealthMessagesEnabled = false
+                                    },
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Close Privacy",
+                                        tint = Color.LightGray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 10.dp),
-                    contentPadding = PaddingValues(vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(messages, key = { it.id }) { message ->
-                        MessageBubble(
-                            message = message,
-                            isStealthMaskActive = isStealthMaskActive,
-                            onPhotoClick = { fullScreenPhotoPath = it },
-                            onRetry = { viewModel.retryMessage(message.id) },
-                            onDelete = { viewModel.deleteMessage(message.id) }
-                        )
-                    }
 
-                    if (isPeerTyping) {
-                        item(key = "typing_bubble") {
-                            TypingIndicatorBubble()
+                // Chat Messages Container
+                Box(modifier = Modifier.weight(1f)) {
+                    if (messages.isEmpty() && !isPeerTyping) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color(0xFF182229),
+                                modifier = Modifier.padding(24.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(20.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Security,
+                                        contentDescription = "Security",
+                                        tint = WhatsAppTypingGreen,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Text(
+                                        text = "End-to-End Encrypted",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    Text(
+                                        text = "Messages and calls are secured with ECDH & AES-256-GCM. No one outside of this chat can read them.",
+                                        color = WhatsAppTime,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 10.dp),
+                            contentPadding = PaddingValues(vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items(messages, key = { it.id }) { message ->
+                                MessageBubble(
+                                    message = message,
+                                    isStealthMaskActive = isStealthMaskActive,
+                                    onPhotoClick = { fullScreenPhotoPath = it },
+                                    onRetry = { viewModel.retryMessage(message.id) },
+                                    onDelete = { viewModel.deleteMessage(message.id) }
+                                )
+                            }
+
+                            if (isPeerTyping) {
+                                item(key = "typing_bubble") {
+                                    TypingIndicatorBubble()
+                                }
+                            }
                         }
                     }
                 }
@@ -558,6 +725,11 @@ fun ChatScreen(
                 isLouverActive = isLouverFilterActive,
                 isCurtainActive = isReadingCurtainActive,
                 isStealthMaskActive = isStealthMaskActive,
+                currentOpacity = louverOpacity,
+                onOpacityChanged = {
+                    louverOpacity = it
+                    secureStorage?.privacyFilterOpacity = it
+                },
                 onToggleLouver = {
                     isLouverFilterActive = it
                     secureStorage?.isAntiPeepLouverEnabled = it
