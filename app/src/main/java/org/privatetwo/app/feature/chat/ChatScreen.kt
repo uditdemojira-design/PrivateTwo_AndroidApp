@@ -1,6 +1,7 @@
 package org.privatetwo.app.feature.chat
 
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import org.privatetwo.app.core.database.DeliveryStatus
 import org.privatetwo.app.core.signaling.SignalingConnectionState
 import org.privatetwo.app.core.notification.NotificationHelper
 import org.privatetwo.app.core.security.SecureStorage
+import org.privatetwo.app.core.util.ProfileImageHelper
 import org.privatetwo.app.feature.privacy.AntiPeepShieldOverlay
 import org.privatetwo.app.feature.privacy.PrivacyControlsBottomSheet
 import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
@@ -147,6 +149,40 @@ fun ChatScreen(
 
     var fullScreenPhotoPath by remember { mutableStateOf<String?>(null) }
 
+    var partnerPhotoPath by remember {
+        mutableStateOf(secureStorage?.partnerProfilePicturePath ?: secureStorage?.profilePicturePath)
+    }
+    var avatarVersion by remember { mutableIntStateOf(0) }
+    var showContactProfileDialog by remember { mutableStateOf(false) }
+    var showEditNameDialog by remember { mutableStateOf(false) }
+    var tempNameInput by remember { mutableStateOf("") }
+    var currentPartnerName by remember(partnerDisplayName) {
+        mutableStateOf(partnerDisplayName ?: secureStorage?.getPartnerDisplayName() ?: "Private Partner")
+    }
+
+    val avatarBitmap = remember(partnerPhotoPath, avatarVersion) {
+        ProfileImageHelper.loadAvatarBitmap(partnerPhotoPath)
+    }
+
+    val contactPhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val saved = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
+            if (saved != null) {
+                secureStorage?.partnerProfilePicturePath = saved
+                if (secureStorage?.profilePicturePath.isNullOrBlank()) {
+                    secureStorage?.profilePicturePath = saved
+                }
+                partnerPhotoPath = saved
+                avatarVersion++
+                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     LaunchedEffect(messages.size, isPeerTyping) {
         val totalCount = messages.size + (if (isPeerTyping) 1 else 0)
         if (totalCount > 0) {
@@ -183,29 +219,44 @@ fun ChatScreen(
                     title = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showContactProfileDialog = true }
+                                .padding(vertical = 4.dp, horizontal = 2.dp)
                         ) {
                             Surface(
                                 shape = CircleShape,
                                 color = Color(0xFF1E2B33),
                                 modifier = Modifier.size(40.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Lock,
-                                        contentDescription = null,
-                                        tint = WhatsAppTypingGreen,
-                                        modifier = Modifier.size(20.dp)
+                                if (avatarBitmap != null) {
+                                    Image(
+                                        bitmap = avatarBitmap.asImageBitmap(),
+                                        contentDescription = "Profile Picture",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = "Profile",
+                                            tint = Color(0xFF8696A0),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
                                 }
                             }
 
                             Column {
                                 Text(
-                                    text = partnerDisplayName ?: "Private Partner",
+                                    text = currentPartnerName,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
 
                                 if (isPeerTyping) {
@@ -754,6 +805,342 @@ fun ChatScreen(
             FullscreenPhotoDialog(
                 photoPath = fullScreenPhotoPath!!,
                 onDismiss = { fullScreenPhotoPath = null }
+            )
+        }
+
+        if (showContactProfileDialog) {
+            Dialog(
+                onDismissRequest = { showContactProfileDialog = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.92f)
+                        .wrapContentHeight(),
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF1F2C34),
+                    tonalElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Header with title and close button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Contact Info",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            IconButton(
+                                onClick = { showContactProfileDialog = false },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = Color(0xFF8696A0)
+                                )
+                            }
+                        }
+
+                        // Large Circular Profile Avatar (Tap to change)
+                        Box(
+                            modifier = Modifier
+                                .size(110.dp)
+                                .clickable { contactPhotoLauncher.launch("image/*") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF2A3942),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                if (avatarBitmap != null) {
+                                    Image(
+                                        bitmap = avatarBitmap.asImageBitmap(),
+                                        contentDescription = "Contact Photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = "Contact Photo",
+                                            tint = Color(0xFF8696A0),
+                                            modifier = Modifier.size(60.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Camera badge overlay
+                            Surface(
+                                shape = CircleShape,
+                                color = WhatsAppTypingGreen,
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .align(Alignment.BottomEnd)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.CameraAlt,
+                                        contentDescription = "Change Photo",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Contact Name with Edit option
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = currentPartnerName,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            IconButton(
+                                onClick = {
+                                    tempNameInput = currentPartnerName
+                                    showEditNameDialog = true
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .padding(start = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Name",
+                                    tint = WhatsAppTypingGreen,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Connection Status Pill
+                        val (badgeBg, badgeText, badgeColor) = when (signalingState) {
+                            SignalingConnectionState.CONNECTED -> Triple(Color(0xFF103629), "Online • Connected", WhatsAppTypingGreen)
+                            SignalingConnectionState.CONNECTING -> Triple(Color(0xFF332B10), "Connecting…", Color(0xFFF57F17))
+                            SignalingConnectionState.DISCONNECTED -> Triple(Color(0xFF262D31), "Offline", Color(0xFF8696A0))
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = badgeBg
+                        ) {
+                            Text(
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = badgeColor,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+
+                        // Encryption & Fingerprint Info Box
+                        val peerId = secureStorage?.getPairedPeerDeviceId()
+                        if (!peerId.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF111B21),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = WhatsAppTypingGreen,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = "End-to-End Encrypted (ECDH P-256)",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = WhatsAppTypingGreen,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Text(
+                                        text = "Fingerprint: $peerId",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF8696A0),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        // Quick Action Shortcuts: Audio, Video, Privacy Shield
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            // Audio Call
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        showContactProfileDialog = false
+                                        onStartAudioCall()
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF202C33),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Phone,
+                                            contentDescription = "Audio Call",
+                                            tint = WhatsAppTypingGreen,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Audio", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                            }
+
+                            // Video Call
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        showContactProfileDialog = false
+                                        onStartVideoCall()
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF202C33),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Videocam,
+                                            contentDescription = "Video Call",
+                                            tint = WhatsAppTypingGreen,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Video", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                            }
+
+                            // Privacy Shield Settings
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        showContactProfileDialog = false
+                                        showPrivacySheet = true
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF202C33),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = "Privacy Shield",
+                                            tint = WhatsAppTypingGreen,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Shield", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                            }
+                        }
+
+                        // Button to Set/Change Photo
+                        Button(
+                            onClick = { contactPhotoLauncher.launch("image/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = WhatsAppTypingGreen),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = null,
+                                tint = Color(0xFF111B21),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (avatarBitmap != null) "Change Profile Photo" else "Set Profile Photo",
+                                color = Color(0xFF111B21),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showEditNameDialog) {
+            AlertDialog(
+                onDismissRequest = { showEditNameDialog = false },
+                title = { Text("Edit Contact Name") },
+                text = {
+                    OutlinedTextField(
+                        value = tempNameInput,
+                        onValueChange = { tempNameInput = it },
+                        label = { Text("Contact Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val trimmed = tempNameInput.trim()
+                            if (trimmed.isNotBlank()) {
+                                secureStorage?.setPartnerDisplayName(trimmed)
+                                currentPartnerName = trimmed
+                                Toast.makeText(context, "Contact name updated", Toast.LENGTH_SHORT).show()
+                            }
+                            showEditNameDialog = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEditNameDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
             )
         }
     }

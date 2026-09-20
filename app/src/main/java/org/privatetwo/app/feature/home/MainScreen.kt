@@ -81,9 +81,29 @@ fun MainScreen(
         }
     }
 
-    // Partner Name
+    // Partner Name & Avatar
     val storedPartnerName = secureStorage.getPartnerDisplayName()
     val effectivePartnerName = partnerDisplayName ?: storedPartnerName ?: "Private Partner"
+    var currentPartnerName by remember(effectivePartnerName) { mutableStateOf(effectivePartnerName) }
+    var showPartnerNameEditDialog by remember { mutableStateOf(false) }
+    var tempPartnerNameInput by remember { mutableStateOf("") }
+
+    var partnerPicPath by remember { mutableStateOf(secureStorage.partnerProfilePicturePath ?: secureStorage.profilePicturePath) }
+    val partnerProfileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val savedPath = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
+            if (savedPath != null) {
+                secureStorage.partnerProfilePicturePath = savedPath
+                partnerPicPath = savedPath
+                profilePicVersion++
+                Toast.makeText(context, "Partner photo updated", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // Chat Lock status
     var isChatLockActive by remember { mutableStateOf(secureStorage.isChatLockEnabled) }
@@ -339,18 +359,97 @@ fun MainScreen(
                         )
                     }
 
-                    Column {
-                        Text(
-                            text = "Partner Display Name",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = effectivePartnerName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        // Partner Photo with tap to change
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clickable { partnerProfileLauncher.launch("image/*") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                val partnerBmp = remember(partnerPicPath, profilePicVersion) {
+                                    ProfileImageHelper.loadAvatarBitmap(partnerPicPath)
+                                }
+                                if (partnerBmp != null) {
+                                    Image(
+                                        bitmap = partnerBmp.asImageBitmap(),
+                                        contentDescription = "Partner Photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Person,
+                                            contentDescription = "Partner Photo",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Camera badge icon overlay
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .align(Alignment.BottomEnd)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.CameraAlt,
+                                        contentDescription = "Change Partner Photo",
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Partner Display Name",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = currentPartnerName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Tap photo to set contact avatar",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            tempPartnerNameInput = currentPartnerName
+                            showPartnerNameEditDialog = true
+                        }) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Partner Name",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     Column {
@@ -469,13 +568,25 @@ fun MainScreen(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(48.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Chat,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(24.dp)
+                            val partnerBmp = remember(partnerPicPath, profilePicVersion) {
+                                ProfileImageHelper.loadAvatarBitmap(partnerPicPath)
+                            }
+                            if (partnerBmp != null) {
+                                Image(
+                                    bitmap = partnerBmp.asImageBitmap(),
+                                    contentDescription = "Partner Avatar",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
                                 )
+                            } else {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Chat,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
                         }
                         Column {
@@ -717,6 +828,54 @@ fun MainScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showMyNameEditDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        if (showPartnerNameEditDialog) {
+            AlertDialog(
+                onDismissRequest = { showPartnerNameEditDialog = false },
+                title = {
+                    Text(
+                        text = "Edit Partner Name",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Set a custom display name for your contact:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = tempPartnerNameInput,
+                            onValueChange = { tempPartnerNameInput = it },
+                            label = { Text("Partner Name") },
+                            placeholder = { Text("e.g. Udit, Partner") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val trimmed = tempPartnerNameInput.trim()
+                        if (trimmed.isNotBlank()) {
+                            secureStorage.setPartnerDisplayName(trimmed)
+                            currentPartnerName = trimmed
+                            Toast.makeText(context, "Partner name updated", Toast.LENGTH_SHORT).show()
+                        }
+                        showPartnerNameEditDialog = false
+                    }) {
+                        Text("Save Name")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showPartnerNameEditDialog = false }) {
                         Text("Cancel")
                     }
                 }

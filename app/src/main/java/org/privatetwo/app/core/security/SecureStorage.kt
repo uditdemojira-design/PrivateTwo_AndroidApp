@@ -61,6 +61,7 @@ class SecureStorage(private val context: Context) {
         private const val KEY_HAS_PROMPTED_NAME = "has_prompted_name"
         private const val KEY_CHAT_LOCK_ENABLED = "chat_lock_enabled"
         private const val KEY_PROFILE_PICTURE_PATH = "profile_picture_path"
+        private const val KEY_PARTNER_PROFILE_PICTURE_PATH = "partner_profile_picture_path"
 
         private const val KEY_ANTI_PEEP_TILT = "anti_peep_tilt_enabled"
         private const val KEY_ANTI_PEEP_SHADE = "anti_peep_shade_enabled"
@@ -306,6 +307,17 @@ class SecureStorage(private val context: Context) {
                 prefs.edit().remove(KEY_PROFILE_PICTURE_PATH).apply()
             } else {
                 prefs.edit().putString(KEY_PROFILE_PICTURE_PATH, trimmed).apply()
+            }
+        }
+
+    var partnerProfilePicturePath: String?
+        get() = prefs.getString(KEY_PARTNER_PROFILE_PICTURE_PATH, null)?.takeIf { it.isNotBlank() }
+        set(value) {
+            val trimmed = value?.trim()
+            if (trimmed.isNullOrBlank()) {
+                prefs.edit().remove(KEY_PARTNER_PROFILE_PICTURE_PATH).apply()
+            } else {
+                prefs.edit().putString(KEY_PARTNER_PROFILE_PICTURE_PATH, trimmed).apply()
             }
         }
 
