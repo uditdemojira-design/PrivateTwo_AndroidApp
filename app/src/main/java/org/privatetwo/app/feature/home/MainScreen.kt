@@ -32,10 +32,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingConnectionState
 import java.io.File
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,6 +143,64 @@ fun MainScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Time-based Personalized Greeting Banner
+            val greeting = remember(myName) {
+                val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                val displayName = if (!myName.isNullOrBlank()) myName!!.trim() else "User"
+                when (hour) {
+                    in 4..11 -> "Good Morning, $displayName ☀️"
+                    in 12..16 -> "Good Afternoon, $displayName 🌤️"
+                    else -> "Good Evening, $displayName 🌙"
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = when {
+                                    greeting.contains("Morning") -> "☀️"
+                                    greeting.contains("Afternoon") -> "🌤️"
+                                    else -> "🌙"
+                                },
+                                fontSize = 22.sp
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = greeting,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "End-to-end encrypted session active",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Live Status Card
             ConnectionStatusCard(connectionState = connectionState)
 
