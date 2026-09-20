@@ -89,10 +89,10 @@ fun ChatScreen(
 
     var isManualBlackoutActive by remember { mutableStateOf(false) }
     var isAntiPeepTiltEnabled by remember { mutableStateOf(secureStorage?.isAntiPeepTiltEnabled ?: false) }
-    var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: false) }
+    var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: true) }
     var isReadingCurtainActive by remember { mutableStateOf(secureStorage?.isAntiPeepShadeEnabled ?: false) }
     var isStealthMaskActive by remember { mutableStateOf(secureStorage?.isStealthMessagesEnabled ?: false) }
-    var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.85f) }
+    var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.88f) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     var isTiltDismissedLocally by remember { mutableStateOf(false) }
     val isTiltRaw by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
@@ -272,7 +272,7 @@ fun ChatScreen(
                             onDismissRequest = { showMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text(if (isLouverFilterActive) "Black Screen Shield: ON (${(louverOpacity * 100).toInt()}%)" else "Black Screen Shield: OFF") },
+                                text = { Text(if (isLouverFilterActive) "Samsung Privacy Display: ON (${(louverOpacity * 100).toInt()}%)" else "Samsung Privacy Display: OFF") },
                                 leadingIcon = {
                                     Icon(
                                         Icons.Default.Shield,
@@ -561,14 +561,14 @@ fun ChatScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = if (isLouverFilterActive) "Black Screen" else if (isReadingCurtainActive) "Curtain" else "Tap-Reveal",
+                                    text = if (isLouverFilterActive) "Samsung Privacy Display" else if (isReadingCurtainActive) "Curtain" else "Tap-Reveal",
                                     color = Color.White,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
 
                                 if (isLouverFilterActive) {
-                                    listOf(0.75f to "75%", 0.85f to "85%", 0.93f to "93%").forEach { (level, label) ->
+                                    listOf(0.80f to "80%", 0.88f to "88% Metro", 0.94f to "94% Max").forEach { (level, label) ->
                                         Surface(
                                             shape = RoundedCornerShape(10.dp),
                                             color = if (louverOpacity == level) WhatsAppTypingGreen else Color(0xFF24343D),
@@ -680,6 +680,7 @@ fun ChatScreen(
                                 MessageBubble(
                                     message = message,
                                     isStealthMaskActive = isStealthMaskActive,
+                                    isPrivacyShieldActive = isLouverFilterActive,
                                     onPhotoClick = { fullScreenPhotoPath = it },
                                     onRetry = { viewModel.retryMessage(message.id) },
                                     onDelete = { viewModel.deleteMessage(message.id) }
@@ -847,6 +848,7 @@ fun isSingleOrDoubleEmoji(text: String): Boolean {
 fun MessageBubble(
     message: ChatMessage,
     isStealthMaskActive: Boolean = false,
+    isPrivacyShieldActive: Boolean = false,
     onPhotoClick: ((String) -> Unit)? = null,
     onRetry: () -> Unit,
     onDelete: () -> Unit
@@ -866,7 +868,13 @@ fun MessageBubble(
 
     val isLargeEmojiOnly = message.messageType == "TEXT" && isSingleOrDoubleEmoji(message.text)
 
-    val bubbleColor = if (isOutgoing) WhatsAppOutgoingBubble else WhatsAppIncomingBubble
+    val baseBubbleColor = if (isOutgoing) WhatsAppOutgoingBubble else WhatsAppIncomingBubble
+    val bubbleColor = if (isPrivacyShieldActive) {
+        if (isOutgoing) Color(0xFF00382E) else Color(0xFF141E24)
+    } else {
+        baseBubbleColor
+    }
+    val textColor = if (isPrivacyShieldActive) Color(0xFF8B9FA9) else WhatsAppText
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val formattedTime = remember(message.timestamp) { timeFormatter.format(Date(message.timestamp)) }
 
@@ -1136,7 +1144,7 @@ fun MessageBubble(
                         if (message.messageType == "TEXT" || (message.messageType != "PHOTO" && message.text != message.mediaFileName)) {
                             Text(
                                 text = message.text,
-                                color = WhatsAppText,
+                                color = textColor,
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(bottom = 2.dp)
                             )

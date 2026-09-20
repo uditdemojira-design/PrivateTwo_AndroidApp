@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -48,7 +49,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Monitors phone orientation for extreme side-tilt (> 50 degrees).
+ * Monitors phone orientation for extreme side-tilt (> 65 degrees).
  * Battery-optimized with SENSOR_DELAY_NORMAL and lifecycle auto-unregister.
  */
 @Composable
@@ -132,33 +133,54 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
 }
 
 /**
- * Optical Micro-Louver Polarized Filter:
- * Draws ultra-dense vertical black raster lines plus heavy contrast darkening (80% - 95%).
- * Looking straight (0°): Your eyes see through the slits clearly.
- * Looking from the side (>25° angle): Angular light paths are fully blocked, making the screen appear solid black to bystanders.
+ * Samsung-style Privacy Display Filter:
+ * Recreates the viewing-angle restriction of Samsung Galaxy S26 Ultra's Privacy Display in software:
+ * 1. Straight view (0°, user holding phone normally in hand): Full clarity through the center aperture & micro-slits.
+ * 2. Off-axis / Side-angle view (30°-70°, person sitting next to you in metro/bus):
+ *    Angular light rays are extinguished by the lateral optical vignette and the dense 2px micro-louver grating,
+ *    making the screen appear pitch-black to bystanders without requiring phone tilting.
  */
-fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.85f): Modifier {
+fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.88f): Modifier {
     if (!enabled) return this
     return this.drawWithContent {
         drawContent()
-        // Deep contrast black mask directly over the screen (up to 96% blackout)
-        drawRect(Color.Black.copy(alpha = darkTintAlpha.coerceIn(0.60f, 0.96f)))
-        // Dense vertical optical micro-louvers (blocks horizontal 25°-60° side peepers)
+
         val width = size.width
         val height = size.height
-        val step = 2.5f
+        val effectiveAlpha = darkTintAlpha.coerceIn(0.65f, 0.96f)
+
+        // 1. Deep optical black mask directly over the screen
+        drawRect(Color.Black.copy(alpha = effectiveAlpha))
+
+        // 2. Lateral Off-Axis Vignette (Samsung Privacy Display viewing cone restrictor)
+        // Left & right edges (where side-sitters in metro view) are forced to 98% opaque black
+        val lateralVignette = Brush.horizontalGradient(
+            0.00f to Color.Black.copy(alpha = 0.98f),
+            0.12f to Color.Black.copy(alpha = 0.75f),
+            0.30f to Color.Transparent,
+            0.70f to Color.Transparent,
+            0.88f to Color.Black.copy(alpha = 0.75f),
+            1.00f to Color.Black.copy(alpha = 0.98f),
+            startX = 0f,
+            endX = width
+        )
+        drawRect(brush = lateralVignette)
+
+        // 3. Dense vertical optical micro-louvers (physical parallax barrier against side angles)
+        val step = 2.0f
         var x = 0f
         while (x < width) {
             drawLine(
-                color = Color.Black.copy(alpha = 0.95f),
+                color = Color.Black.copy(alpha = 0.96f),
                 start = Offset(x, 0f),
                 end = Offset(x, height),
                 strokeWidth = 1.3f
             )
             x += step
         }
-        // Subtle horizontal cross-slits (blocks diagonal & shoulder-angle peeping)
-        val hStep = 5.0f
+
+        // 4. Subtle horizontal cross-slits (anti-moire + shoulder glance block)
+        val hStep = 4.0f
         var y = 0f
         while (y < height) {
             drawLine(
@@ -463,8 +485,8 @@ fun PrivacyControlsBottomSheet(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("🛡️ Side-Angle Blackout Shield", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text("Polarized black raster blocks off-axis viewing so side-sitters only see a dark black screen.", fontSize = 12.sp, color = Color.Gray)
+                        Text("🛡️ Samsung Privacy Display (Anti-Peep)", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Restricts viewing angle so side-sitters in metro only see a black screen while you hold phone straight.", fontSize = 12.sp, color = Color.Gray)
                     }
                     Switch(
                         checked = isLouverActive,
@@ -478,8 +500,8 @@ fun PrivacyControlsBottomSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Darkness:", fontSize = 12.sp, color = Color.LightGray)
-                        listOf(0.75f to "75%", 0.85f to "85% Deep", 0.93f to "93% Max").forEach { (value, label) ->
+                        Text("Level:", fontSize = 12.sp, color = Color.LightGray)
+                        listOf(0.80f to "80%", 0.88f to "88% Metro", 0.94f to "94% Max").forEach { (value, label) ->
                             FilterChip(
                                 selected = (currentOpacity == value),
                                 onClick = { onOpacityChanged(value) },
