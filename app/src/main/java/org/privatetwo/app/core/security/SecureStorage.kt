@@ -332,7 +332,7 @@ class SecureStorage(private val context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_SHADE, value).apply()
 
     var isAntiPeepLouverEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ANTI_PEEP_LOUVER, true) // Enabled by default like Samsung Privacy Display
+        get() = prefs.getBoolean(KEY_ANTI_PEEP_LOUVER, false) // Disabled by default; toggleable on demand
         set(value) = prefs.edit().putBoolean(KEY_ANTI_PEEP_LOUVER, value).apply()
 
     var isStealthMessagesEnabled: Boolean
@@ -340,7 +340,7 @@ class SecureStorage(private val context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_STEALTH_MESSAGES, value).apply()
 
     var privacyFilterOpacity: Float
-        get() = prefs.getFloat("privacy_filter_opacity", 0.88f) // Metro Deep standard
+        get() = prefs.getFloat("privacy_filter_opacity", 0.50f)
         set(value) = prefs.edit().putFloat("privacy_filter_opacity", value).apply()
 
     fun getSignalingUrl(defaultUrl: String): String {

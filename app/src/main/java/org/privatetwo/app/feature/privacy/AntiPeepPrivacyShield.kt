@@ -140,56 +140,47 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
  *    Angular light rays are extinguished by the lateral optical vignette and the dense 2px micro-louver grating,
  *    making the screen appear pitch-black to bystanders without requiring phone tilting.
  */
-fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.88f): Modifier {
+fun Modifier.antiPeepLouverFilter(enabled: Boolean, darkTintAlpha: Float = 0.50f): Modifier {
     if (!enabled) return this
     return this.drawWithContent {
         drawContent()
 
         val width = size.width
         val height = size.height
-        val effectiveAlpha = darkTintAlpha.coerceIn(0.65f, 0.96f)
 
-        // 1. Deep optical black mask directly over the screen
-        drawRect(Color.Black.copy(alpha = effectiveAlpha))
-
-        // 2. Lateral Off-Axis Vignette (Samsung Privacy Display viewing cone restrictor)
-        // Left & right edges (where side-sitters in metro view) are forced to 98% opaque black
+        // 1. Lateral Off-Axis Vignette: Blocks viewing from steep side angles (left & right)
+        // Center (where the phone owner holds and reads) is clear (0% alpha) for 100% legibility!
         val lateralVignette = Brush.horizontalGradient(
-            0.00f to Color.Black.copy(alpha = 0.98f),
-            0.12f to Color.Black.copy(alpha = 0.75f),
-            0.30f to Color.Transparent,
-            0.70f to Color.Transparent,
-            0.88f to Color.Black.copy(alpha = 0.75f),
-            1.00f to Color.Black.copy(alpha = 0.98f),
+            0.00f to Color.Black.copy(alpha = 0.90f),
+            0.10f to Color.Black.copy(alpha = 0.60f),
+            0.20f to Color.Black.copy(alpha = 0.15f),
+            0.28f to Color.Transparent,
+            0.72f to Color.Transparent,
+            0.80f to Color.Black.copy(alpha = 0.15f),
+            0.90f to Color.Black.copy(alpha = 0.60f),
+            1.00f to Color.Black.copy(alpha = 0.90f),
             startX = 0f,
             endX = width
         )
         drawRect(brush = lateralVignette)
 
-        // 3. Dense vertical optical micro-louvers (physical parallax barrier against side angles)
-        val step = 2.0f
+        // 2. Subtle center tint: Dims screen slightly so viewing angle contrast drops,
+        // but user holding phone straight sees everything clearly with zero eye-strain.
+        val centerDim = (darkTintAlpha * 0.25f).coerceIn(0.06f, 0.20f)
+        drawRect(Color.Black.copy(alpha = centerDim))
+
+        // 3. Ultra-fine micro-louvers: Subtle hairline grid (alpha 0.12f)
+        // Disrupts angular off-axis viewing without obscuring the owner's direct view
+        val step = 4.0f
         var x = 0f
         while (x < width) {
             drawLine(
-                color = Color.Black.copy(alpha = 0.96f),
+                color = Color.Black.copy(alpha = 0.12f),
                 start = Offset(x, 0f),
                 end = Offset(x, height),
-                strokeWidth = 1.3f
-            )
-            x += step
-        }
-
-        // 4. Subtle horizontal cross-slits (anti-moire + shoulder glance block)
-        val hStep = 4.0f
-        var y = 0f
-        while (y < height) {
-            drawLine(
-                color = Color.Black.copy(alpha = 0.65f),
-                start = Offset(0f, y),
-                end = Offset(width, y),
                 strokeWidth = 1.0f
             )
-            y += hStep
+            x += step
         }
     }
 }
@@ -501,7 +492,7 @@ fun PrivacyControlsBottomSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Level:", fontSize = 12.sp, color = Color.LightGray)
-                        listOf(0.80f to "80%", 0.88f to "88% Metro", 0.94f to "94% Max").forEach { (value, label) ->
+                        listOf(0.30f to "Mild", 0.50f to "Metro", 0.70f to "Deep").forEach { (value, label) ->
                             FilterChip(
                                 selected = (currentOpacity == value),
                                 onClick = { onOpacityChanged(value) },

@@ -89,10 +89,10 @@ fun ChatScreen(
 
     var isManualBlackoutActive by remember { mutableStateOf(false) }
     var isAntiPeepTiltEnabled by remember { mutableStateOf(secureStorage?.isAntiPeepTiltEnabled ?: false) }
-    var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: true) }
+    var isLouverFilterActive by remember { mutableStateOf(secureStorage?.isAntiPeepLouverEnabled ?: false) }
     var isReadingCurtainActive by remember { mutableStateOf(secureStorage?.isAntiPeepShadeEnabled ?: false) }
     var isStealthMaskActive by remember { mutableStateOf(secureStorage?.isStealthMessagesEnabled ?: false) }
-    var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.88f) }
+    var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.50f) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     var isTiltDismissedLocally by remember { mutableStateOf(false) }
     val isTiltRaw by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
@@ -568,7 +568,7 @@ fun ChatScreen(
                                 )
 
                                 if (isLouverFilterActive) {
-                                    listOf(0.80f to "80%", 0.88f to "88% Metro", 0.94f to "94% Max").forEach { (level, label) ->
+                                    listOf(0.30f to "Mild", 0.50f to "Metro", 0.70f to "Deep").forEach { (level, label) ->
                                         Surface(
                                             shape = RoundedCornerShape(10.dp),
                                             color = if (louverOpacity == level) WhatsAppTypingGreen else Color(0xFF24343D),
@@ -868,13 +868,8 @@ fun MessageBubble(
 
     val isLargeEmojiOnly = message.messageType == "TEXT" && isSingleOrDoubleEmoji(message.text)
 
-    val baseBubbleColor = if (isOutgoing) WhatsAppOutgoingBubble else WhatsAppIncomingBubble
-    val bubbleColor = if (isPrivacyShieldActive) {
-        if (isOutgoing) Color(0xFF00382E) else Color(0xFF141E24)
-    } else {
-        baseBubbleColor
-    }
-    val textColor = if (isPrivacyShieldActive) Color(0xFF8B9FA9) else WhatsAppText
+    val bubbleColor = if (isOutgoing) WhatsAppOutgoingBubble else WhatsAppIncomingBubble
+    val textColor = WhatsAppText
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val formattedTime = remember(message.timestamp) { timeFormatter.format(Date(message.timestamp)) }
 
