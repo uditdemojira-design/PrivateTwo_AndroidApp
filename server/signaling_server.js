@@ -12,7 +12,7 @@ const http = require('http');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8088;
-const PAIRING_CODE_TTL_MS = 180 * 1000; // 3 minutes
+const PAIRING_CODE_TTL_MS = 600 * 1000; // 10 minutes (plenty of time during voice/phone calls)
 const LOG_LEVEL = process.env.LOG_LEVEL || 'warn';
 
 function logDebug(msg) { if (LOG_LEVEL === 'debug') console.log(`[Signaling:DEBUG] ${msg}`); }
@@ -148,6 +148,13 @@ function handleMessage(ws, msg) {
         deviceIdToWs.set(deviceId, ws);
         ws.deviceId = deviceId;
 
+        // Auto-reconnect active pairing code initiator socket if this device registered one
+        for (const [code, entry] of pairingCodes.entries()) {
+            if (entry.initiatorDeviceId === deviceId) {
+                entry.initiatorWs = ws;
+            }
+        }
+
         // Auto-reconnect this socket to any existing session it belongs to
         for (const [sId, sess] of sessions.entries()) {
             if (sess.deviceAId === deviceId) {
@@ -217,7 +224,7 @@ function handleMessage(ws, msg) {
                 timeoutId
             });
 
-            safeSend(ws, { type: 'PAIRING_CODE_REGISTERED', code, expiresInSeconds: 180 });
+            safeSend(ws, { type: 'PAIRING_CODE_REGISTERED', code, expiresInSeconds: 600 });
             break;
         }
 
@@ -235,11 +242,11 @@ function handleMessage(ws, msg) {
                 return sendError(ws, 'CANNOT_PAIR_SELF', 'Cannot pair a device with itself');
             }
 
-            // Keep code alive briefly to allow retry if initial handshake dropped
+            // Keep code alive for 5 minutes to allow retry if initial handshake dropped
             clearTimeout(entry.timeoutId);
             entry.timeoutId = setTimeout(() => {
                 pairingCodes.delete(code);
-            }, 60000);
+            }, 300000);
 
             // Find current active socket for initiator
             const activeInitiatorWs = deviceIdToWs.get(entry.initiatorDeviceId) || entry.initiatorWs;
@@ -388,7 +395,7 @@ function handleMessage(ws, msg) {
                 || ((session.deviceA === ws) ? session.deviceB : session.deviceA);
 
             if (!partnerWs || partnerWs.readyState !== WebSocket.OPEN) {
-                if (type === 'E2EE_ENVELOPE') {
+                if (type === 'E2EE_ENVELOPE' || type === 'PAIR_HANDSHAKE') {
                     if (!offlineQueues.has(partnerDeviceId)) {
                         offlineQueues.set(partnerDeviceId, []);
                     }
@@ -396,8 +403,10 @@ function handleMessage(ws, msg) {
                     if (q.length < 500) {
                         q.push(msg);
                     }
-                    logInfo(`[Signaling] Queued offline message for device ${partnerDeviceId}, queue size: ${q.length}`);
-                    safeSend(ws, { type: 'MESSAGE_QUEUED_OFFLINE', messageId: msg.messageId || 'unknown' });
+                    logInfo(`[Signaling] Queued ${type} for device ${partnerDeviceId}, queue size: ${q.length}`);
+                    if (type === 'E2EE_ENVELOPE') {
+                        safeSend(ws, { type: 'MESSAGE_QUEUED_OFFLINE', messageId: msg.messageId || 'unknown' });
+                    }
                     break;
                 }
                 return sendError(ws, 'PEER_OFFLINE', 'Partner device is currently offline');

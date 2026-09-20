@@ -70,15 +70,17 @@ class PairingManager(
     }
 
     fun onSocketReconnected() {
+        val localDeviceId = secureStorage.getLocalDeviceId()
         val code = activeGeneratedCode
-        if (code != null && _uiState.value is PairingUiState.CodeGenerated) {
-            val localDeviceId = secureStorage.getLocalDeviceId()
+        if (code != null && (_uiState.value is PairingUiState.CodeGenerated || _uiState.value is PairingUiState.Connecting)) {
             signalingClient.registerPairingCode(code, localDeviceId)
         }
         val joinCode = activeJoinCode
         if (joinCode != null && _uiState.value is PairingUiState.Connecting) {
-            val localDeviceId = secureStorage.getLocalDeviceId()
             signalingClient.joinPairingCode(joinCode, localDeviceId)
+        }
+        if (isInitiator && _uiState.value is PairingUiState.Connecting) {
+            sendKeyExchangeOffer()
         }
     }
 
@@ -95,7 +97,7 @@ class PairingManager(
 
         signalingClient.connect()
         signalingClient.registerPairingCode(code, localDeviceId)
-        startCountdown(code, 180)
+        startCountdown(code, 600)
     }
 
     fun enterPairingCode(code: String) {
@@ -207,12 +209,13 @@ class PairingManager(
                         // Transient connection issue during handshake; allow background retry
                         return
                     }
-                    if (event.code == "PAIRING_CODE_NOT_FOUND" && joinRetryCount < 3) {
+                    if (event.code == "PAIRING_CODE_NOT_FOUND" && joinRetryCount < 8) {
                         joinRetryCount++
                         scope.launch {
-                            delay(1200)
+                            delay(1500)
                             val joinCode = activeJoinCode
                             if (joinCode != null && _uiState.value is PairingUiState.Connecting) {
+                                _uiState.value = PairingUiState.Connecting("Connecting to partner ($joinRetryCount/8)...")
                                 signalingClient.joinPairingCode(joinCode, secureStorage.getLocalDeviceId())
                             }
                         }
@@ -236,10 +239,10 @@ class PairingManager(
             .put("deviceId", secureStorage.getLocalDeviceId())
 
         handshakeRetryJob = scope.launch {
-            for (attempt in 1..4) {
+            for (attempt in 1..8) {
                 if (_uiState.value !is PairingUiState.Connecting) break
                 signalingClient.sendPairHandshake(payload.toString())
-                delay(2500)
+                delay(1800)
             }
         }
     }
@@ -258,7 +261,12 @@ class PairingManager(
                         .put("action", "ANSWER_KEY")
                         .put("publicKey", CryptoEngine.encodePublicKey(localPair.public))
                         .put("deviceId", secureStorage.getLocalDeviceId())
-                    signalingClient.sendPairHandshake(answer.toString())
+                    val answerStr = answer.toString()
+                    signalingClient.sendPairHandshake(answerStr)
+                    scope.launch {
+                        delay(600)
+                        signalingClient.sendPairHandshake(answerStr)
+                    }
 
                     computeKeysAndShowSas(localPair.public, localPair.private, remotePubKey)
                 }
