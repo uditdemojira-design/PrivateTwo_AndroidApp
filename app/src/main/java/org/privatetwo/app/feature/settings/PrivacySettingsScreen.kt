@@ -14,7 +14,19 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import org.privatetwo.app.core.security.SecureStorage
+import org.privatetwo.app.core.util.ProfileImageHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -24,10 +36,33 @@ fun PrivacySettingsScreen(
     onUnpaired: () -> Unit,
     onToggleFlagSecure: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
     var flagSecure by remember { mutableStateOf(secureStorage.isFlagSecureEnabled) }
     var biometricLock by remember { mutableStateOf(secureStorage.isBiometricLockEnabled) }
     var stealthNotifications by remember { mutableStateOf(secureStorage.isStealthNotificationsEnabled) }
     var showUnpairConfirm by remember { mutableStateOf(false) }
+
+    var myName by remember { mutableStateOf(secureStorage.getMyDisplayName()) }
+    var showNameDialog by remember { mutableStateOf(false) }
+    var tempNameInput by remember(myName) { mutableStateOf(myName ?: "") }
+
+    var profilePicPath by remember { mutableStateOf(secureStorage.profilePicturePath) }
+    var profilePicVersion by remember { mutableIntStateOf(0) }
+    val profileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val savedPath = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
+            if (savedPath != null) {
+                secureStorage.profilePicturePath = savedPath
+                profilePicPath = savedPath
+                profilePicVersion++
+                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val localDeviceId = remember { secureStorage.getLocalDeviceId() }
     val peerDeviceId = remember { secureStorage.getPairedPeerDeviceId() ?: "Not Paired" }
@@ -55,6 +90,137 @@ fun PrivacySettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Profile & Avatar Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clickable { profileLauncher.launch("image/*") },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            val bitmap = remember(profilePicPath, profilePicVersion) {
+                                ProfileImageHelper.loadAvatarBitmap(profilePicPath)
+                            }
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Profile Picture",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.Person,
+                                        contentDescription = "Upload Profile Photo",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .align(Alignment.BottomEnd)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.CameraAlt,
+                                    contentDescription = "Change Photo",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "MY PROFILE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = myName ?: "Tap to set name",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Tap photo to change avatar",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        tempNameInput = myName ?: ""
+                        showNameDialog = true
+                    }) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Name",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            if (showNameDialog) {
+                AlertDialog(
+                    onDismissRequest = { showNameDialog = false },
+                    title = { Text("Display Name") },
+                    text = {
+                        OutlinedTextField(
+                            value = tempNameInput,
+                            onValueChange = { tempNameInput = it },
+                            label = { Text("Your Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val trimmed = tempNameInput.trim()
+                            if (trimmed.isNotBlank()) {
+                                secureStorage.setMyDisplayName(trimmed)
+                                myName = trimmed
+                            }
+                            showNameDialog = false
+                        }) {
+                            Text("Save")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showNameDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
             Text(
                 text = "SECURITY CONTROLS",
                 style = MaterialTheme.typography.labelMedium,

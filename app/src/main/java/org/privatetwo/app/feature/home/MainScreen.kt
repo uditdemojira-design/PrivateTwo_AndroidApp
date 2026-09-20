@@ -2,8 +2,10 @@ package org.privatetwo.app.feature.home
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import org.privatetwo.app.core.util.ProfileImageHelper
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,21 +62,19 @@ fun MainScreen(
     var tempMyNameInput by remember(myName) { mutableStateOf(myName ?: "") }
 
     var profilePicPath by remember { mutableStateOf(secureStorage.profilePicturePath) }
+    var profilePicVersion by remember { mutableIntStateOf(0) }
     val profileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                val dest = File(context.filesDir, "profile_avatar.jpg")
-                context.contentResolver.openInputStream(it)?.use { input ->
-                    dest.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                secureStorage.profilePicturePath = dest.absolutePath
-                profilePicPath = dest.absolutePath
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val savedPath = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
+            if (savedPath != null) {
+                secureStorage.profilePicturePath = savedPath
+                profilePicPath = savedPath
+                profilePicVersion++
+                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -162,31 +162,56 @@ fun MainScreen(
                     // Profile Picture with Tap to Change
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .size(64.dp)
                             .clickable { profileLauncher.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
-                        val bitmap = remember(profilePicPath) {
-                            profilePicPath?.let {
-                                try { BitmapFactory.decodeFile(it) } catch (e: Exception) { null }
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            val bitmap = remember(profilePicPath, profilePicVersion) {
+                                ProfileImageHelper.loadAvatarBitmap(profilePicPath)
+                            }
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Profile Picture",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.Person,
+                                        contentDescription = "Upload Profile Photo",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
                             }
                         }
-                        if (bitmap != null) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Profile Picture",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.CameraAlt,
-                                contentDescription = "Upload Profile Photo",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
+
+                        // Camera badge icon overlay
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .align(Alignment.BottomEnd)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.CameraAlt,
+                                    contentDescription = "Change Photo",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
                         }
                     }
 
