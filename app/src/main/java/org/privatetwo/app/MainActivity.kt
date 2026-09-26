@@ -117,6 +117,11 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (packageManager.canRequestPackageInstalls()) {
+                AppUpdateManager.launchInstallerIfReady(this)
+            }
+        }
         if (app.secureStorage.isPaired()) {
             SignalingKeepAliveService.start(this)
         }
@@ -224,7 +229,9 @@ class MainActivity : FragmentActivity() {
                             confirmButton = {
                                 Button(
                                     onClick = {
-                                        if (!isDownloadingUpdate) {
+                                        if (updateDownloadProgress >= 1f) {
+                                            AppUpdateManager.launchInstallerIfReady(this@MainActivity)
+                                        } else if (!isDownloadingUpdate) {
                                             isDownloadingUpdate = true
                                             coroutineScope.launch {
                                                 AppUpdateManager.downloadAndInstallApk(
@@ -241,18 +248,22 @@ class MainActivity : FragmentActivity() {
                                             }
                                         }
                                     },
-                                    enabled = !isDownloadingUpdate,
+                                    enabled = !isDownloadingUpdate || updateDownloadProgress >= 1f,
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
                                 ) {
                                     Text(
-                                        text = if (isDownloadingUpdate) "Downloading..." else "Update Now",
+                                        text = when {
+                                            updateDownloadProgress >= 1f -> "Install Update"
+                                            isDownloadingUpdate -> "Downloading..."
+                                            else -> "Update Now"
+                                        },
                                         color = Color(0xFF111B21),
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                             },
                             dismissButton = {
-                                if (!isDownloadingUpdate) {
+                                if (!isDownloadingUpdate || updateDownloadProgress >= 1f) {
                                     TextButton(onClick = { availableUpdate = null }) {
                                         Text("Later", color = Color(0xFF8696A0))
                                     }

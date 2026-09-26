@@ -156,7 +156,16 @@ object AppUpdateManager {
         }
     }
 
-    private fun launchInstaller(context: Context, apkFile: File) {
+    fun launchInstallerIfReady(context: Context): Boolean {
+        val updateFile = File(context.cacheDir, "update.apk")
+        if (updateFile.exists() && updateFile.length() > 1024 * 1024) {
+            launchInstaller(context, updateFile)
+            return true
+        }
+        return false
+    }
+
+    fun launchInstaller(context: Context, apkFile: File) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!context.packageManager.canRequestPackageInstalls()) {
