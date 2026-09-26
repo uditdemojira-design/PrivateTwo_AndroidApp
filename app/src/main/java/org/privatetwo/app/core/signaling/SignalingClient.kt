@@ -54,7 +54,7 @@ class SignalingClient(
 ) {
     private val okHttpClient = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS) // Keep alive for WebSocket
-        .pingInterval(30, TimeUnit.SECONDS)
+        .pingInterval(15, TimeUnit.SECONDS) // Active carrier NAT keep-alive
         .retryOnConnectionFailure(true)
         .build()
 
@@ -66,6 +66,9 @@ class SignalingClient(
 
     private val _connectionState = MutableStateFlow(SignalingConnectionState.DISCONNECTED)
     val connectionState: StateFlow<SignalingConnectionState> = _connectionState.asStateFlow()
+
+    private val _isPeerOnline = MutableStateFlow(false)
+    val isPeerOnline: StateFlow<Boolean> = _isPeerOnline.asStateFlow()
 
     private val _events = MutableSharedFlow<SignalingEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SignalingEvent> = _events.asSharedFlow()
@@ -127,10 +130,15 @@ class SignalingClient(
                     }
                     onConnected?.invoke()
                     synchronized(pendingMessages) {
-                        for (msg in pendingMessages) {
-                            webSocket.send(msg)
+                        val iterator = pendingMessages.iterator()
+                        while (iterator.hasNext()) {
+                            val msg = iterator.next()
+                            if (webSocket.send(msg)) {
+                                iterator.remove()
+                            } else {
+                                break
+                            }
                         }
-                        pendingMessages.clear()
                     }
                 }
 
@@ -144,14 +152,14 @@ class SignalingClient(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     _connectionState.value = SignalingConnectionState.DISCONNECTED
+                    _isPeerOnline.value = false
                     scheduleReconnect()
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     _connectionState.value = SignalingConnectionState.DISCONNECTED
-                    synchronized(pendingMessages) {
-                        pendingMessages.clear()
-                    }
+                    _isPeerOnline.value = false
+                    // Keep pendingMessages intact so they are resent once reconnected!
                     scope.launch {
                         _events.emit(
                             SignalingEvent.Error(
@@ -177,6 +185,7 @@ class SignalingClient(
         webSocket?.close(1000, "Normal closure")
         webSocket = null
         _connectionState.value = SignalingConnectionState.DISCONNECTED
+        _isPeerOnline.value = false
     }
 
     private fun scheduleReconnect() {
@@ -298,10 +307,22 @@ class SignalingClient(
         }
         val ws = webSocket
         if (_connectionState.value == SignalingConnectionState.CONNECTED && ws != null) {
-            return ws.send(finalJson)
+            val sent = ws.send(finalJson)
+            if (!sent) {
+                synchronized(pendingMessages) {
+                    if (!pendingMessages.contains(finalJson)) {
+                        pendingMessages.add(finalJson)
+                    }
+                }
+                _connectionState.value = SignalingConnectionState.DISCONNECTED
+                scheduleReconnect()
+            }
+            return sent
         } else {
             synchronized(pendingMessages) {
-                pendingMessages.add(finalJson)
+                if (!pendingMessages.contains(finalJson)) {
+                    pendingMessages.add(finalJson)
+                }
             }
             if (_connectionState.value == SignalingConnectionState.DISCONNECTED) {
                 connect()
@@ -328,8 +349,14 @@ class SignalingClient(
                     json.getString("peerDeviceId")
                 )
                 "PAIR_HANDSHAKE" -> SignalingEvent.PairHandshakeReceived(json.getString("payload"))
-                "PEER_CONNECTED" -> SignalingEvent.PeerConnected(json.getString("peerDeviceId"))
-                "PEER_DISCONNECTED" -> SignalingEvent.PeerDisconnected
+                "PEER_CONNECTED" -> {
+                    _isPeerOnline.value = true
+                    SignalingEvent.PeerConnected(json.getString("peerDeviceId"))
+                }
+                "PEER_DISCONNECTED", "PEER_OFFLINE" -> {
+                    _isPeerOnline.value = false
+                    SignalingEvent.PeerDisconnected
+                }
                 "SDP_OFFER" -> SignalingEvent.SdpOfferReceived(json.getString("sdp"))
                 "SDP_ANSWER" -> SignalingEvent.SdpAnswerReceived(json.getString("sdp"))
                 "ICE_CANDIDATE" -> SignalingEvent.IceCandidateReceived(

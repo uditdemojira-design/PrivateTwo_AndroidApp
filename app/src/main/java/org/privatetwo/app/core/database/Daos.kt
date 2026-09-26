@@ -68,6 +68,10 @@ interface CallRecordDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCallRecord(record: CallRecordEntity)
 
+    @Query("DELETE FROM call_records WHERE id = :id")
+    suspend fun deleteCallRecord(id: String)
+
     @Query("DELETE FROM call_records")
     suspend fun deleteAllCallRecords()
 }
+

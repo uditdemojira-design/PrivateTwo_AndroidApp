@@ -66,7 +66,8 @@ class FileTransferManager(
         val transferId: String,
         val file: File,
         val isPhoto: Boolean,
-        val isAudio: Boolean = false
+        val isAudio: Boolean = false,
+        val isViewOnce: Boolean = false
     )
 
     data class IncomingFileAssembly(
@@ -77,6 +78,7 @@ class FileTransferManager(
         val expectedChecksum: String,
         val isPhoto: Boolean,
         val isAudio: Boolean = false,
+        val isViewOnce: Boolean = false,
         val tempFile: File,
         var receivedChunks: Int = 0
     )
@@ -85,6 +87,7 @@ class FileTransferManager(
         file: File,
         isPhoto: Boolean,
         isAudio: Boolean = false,
+        isViewOnce: Boolean = false,
         transferId: String = UUID.randomUUID().toString(),
         nextSequenceNumber: () -> Long,
         onChunkReady: suspend (MessageEnvelope) -> Unit
@@ -121,6 +124,7 @@ class FileTransferManager(
             .put("checksum", checksumSha256)
             .put("isPhoto", isPhoto)
             .put("isAudio", isAudio)
+            .put("isViewOnce", isViewOnce)
             .toString()
 
         val headerEnvelope = MessageEnvelope.pack(
@@ -178,6 +182,7 @@ class FileTransferManager(
         val checksum = json.getString("checksum")
         val isPhoto = json.optBoolean("isPhoto", false)
         val isAudio = json.optBoolean("isAudio", false)
+        val isViewOnce = json.optBoolean("isViewOnce", false)
 
         val tempFile = File(transfersDir, "${transferId}.part")
         if (tempFile.exists()) tempFile.delete()
@@ -190,6 +195,7 @@ class FileTransferManager(
             expectedChecksum = checksum,
             isPhoto = isPhoto,
             isAudio = isAudio,
+            isViewOnce = isViewOnce,
             tempFile = tempFile,
             receivedChunks = 0
         )
@@ -249,6 +255,7 @@ class FileTransferManager(
             assembly.tempFile.renameTo(finalFile)
             val wasPhoto = assembly.isPhoto
             val wasAudio = assembly.isAudio
+            val wasViewOnce = assembly.isViewOnce
             incomingAssemblies.remove(transferId)
 
             val finalEntity = database.transferDao().getTransferById(transferId)?.copy(
@@ -261,7 +268,7 @@ class FileTransferManager(
             }
 
             _transferState.value = TransferProgressState.Completed(transferId, finalFile.absolutePath)
-            return@withContext CompletedTransfer(transferId, finalFile, wasPhoto, wasAudio)
+            return@withContext CompletedTransfer(transferId, finalFile, wasPhoto, wasAudio, wasViewOnce)
         }
 
         null

@@ -114,4 +114,32 @@ object ProfileImageHelper {
             null
         }
     }
+
+    /**
+     * Compresses the avatar to a small ~10-15KB thumbnail for fast E2EE sync over WebRTC/Signaling.
+     */
+    fun getAvatarBytesForSync(path: String?): ByteArray? {
+        if (path.isNullOrBlank()) return null
+        val file = File(path)
+        if (!file.exists() || !file.canRead()) return null
+        return try {
+            val original = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+            val targetSize = 256
+            val scaled = if (original.width > targetSize || original.height > targetSize) {
+                val minDim = minOf(original.width, original.height)
+                val x = (original.width - minDim) / 2
+                val y = (original.height - minDim) / 2
+                val square = Bitmap.createBitmap(original, x, y, minDim, minDim)
+                Bitmap.createScaledBitmap(square, targetSize, targetSize, true)
+            } else {
+                original
+            }
+            val baos = java.io.ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 75, baos)
+            baos.toByteArray()
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            null
+        }
+    }
 }

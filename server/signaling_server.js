@@ -350,9 +350,11 @@ function handleMessage(ws, msg) {
                     ? (deviceIdToWs.get(session.deviceBId) || session.deviceB)
                     : (deviceIdToWs.get(session.deviceAId) || session.deviceA);
 
-                safeSend(ws, { type: 'PEER_CONNECTED', peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId) });
-                if (peerWs && peerWs !== ws) {
+                if (peerWs && peerWs !== ws && peerWs.readyState === WebSocket.OPEN) {
+                    safeSend(ws, { type: 'PEER_CONNECTED', peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId) });
                     safeSend(peerWs, { type: 'PEER_CONNECTED', peerDeviceId: devId });
+                } else {
+                    safeSend(ws, { type: 'PEER_DISCONNECTED', peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId) });
                 }
 
                 flushOfflineQueue(devId, ws);

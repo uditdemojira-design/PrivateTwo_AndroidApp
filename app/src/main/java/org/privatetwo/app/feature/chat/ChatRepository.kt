@@ -29,6 +29,7 @@ import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingEvent
 import org.privatetwo.app.core.webrtc.WebRtcSessionManager
 import org.privatetwo.app.core.notification.NotificationHelper
+import org.privatetwo.app.core.util.ProfileImageHelper
 import org.privatetwo.app.feature.files.FileTransferManager
 import java.io.File
 import java.util.Base64
@@ -46,6 +47,14 @@ data class ChatMessage(
     val mediaFileSize: Long = 0L
 )
 
+data class AudioSyncEvent(
+    val action: String, // "PLAY", "PAUSE", "STOP"
+    val messageId: String?,
+    val fileName: String?,
+    val positionMs: Int,
+    val eventTimestamp: Long = System.currentTimeMillis()
+)
+
 class ChatRepository(
     private val context: Context,
     private val database: PrivateTwoDatabase,
@@ -61,8 +70,21 @@ class ChatRepository(
     private val _isPeerTyping = MutableStateFlow(false)
     val isPeerTyping: StateFlow<Boolean> = _isPeerTyping.asStateFlow()
 
+    private val _isPeerOnline = MutableStateFlow(false)
+    val isPeerOnline: StateFlow<Boolean> = _isPeerOnline.asStateFlow()
+
+    private val _peerLastSeenTimestamp = MutableStateFlow(secureStorage.partnerLastSeenTimestamp)
+    val peerLastSeenTimestamp: StateFlow<Long> = _peerLastSeenTimestamp.asStateFlow()
+
     private val _partnerDisplayName = MutableStateFlow<String?>(secureStorage.getPartnerDisplayName())
     val partnerDisplayName: StateFlow<String?> = _partnerDisplayName.asStateFlow()
+
+    private val _partnerAvatarPath = MutableStateFlow<String?>(secureStorage.partnerProfilePicturePath)
+    val partnerAvatarPath: StateFlow<String?> = _partnerAvatarPath.asStateFlow()
+
+    private val _audioSyncEvent = MutableStateFlow<AudioSyncEvent?>(null)
+    val audioSyncEvent: StateFlow<AudioSyncEvent?> = _audioSyncEvent.asStateFlow()
+
     private var typingResetJob: Job? = null
     private var lastTypingSentTime: Long = 0L
 
@@ -80,10 +102,39 @@ class ChatRepository(
                         handleIncomingRawEnvelope(event.envelopeJson)
                     }
                     is SignalingEvent.PeerConnected -> {
+                        _isPeerOnline.value = true
+                        _peerLastSeenTimestamp.value = System.currentTimeMillis()
                         sendNameExchange()
                         resendPendingOutboundMessages()
                     }
+                    is SignalingEvent.PeerDisconnected -> {
+                        _isPeerOnline.value = false
+                        val now = System.currentTimeMillis()
+                        _peerLastSeenTimestamp.value = now
+                        secureStorage.partnerLastSeenTimestamp = now
+                    }
                     else -> Unit
+                }
+            }
+        }
+
+        scope.launch {
+            signalingClient.isPeerOnline.collect { online ->
+                _isPeerOnline.value = online
+                val now = System.currentTimeMillis()
+                _peerLastSeenTimestamp.value = now
+                if (!online) {
+                    secureStorage.partnerLastSeenTimestamp = now
+                }
+            }
+        }
+
+        scope.launch {
+            signalingClient.connectionState.collect { state ->
+                if (state == org.privatetwo.app.core.signaling.SignalingConnectionState.CONNECTED && secureStorage.isPaired()) {
+                    resendPendingOutboundMessages()
+                } else if (state == org.privatetwo.app.core.signaling.SignalingConnectionState.DISCONNECTED) {
+                    _isPeerOnline.value = false
                 }
             }
         }
@@ -160,16 +211,27 @@ class ChatRepository(
         messageId
     }
 
-    suspend fun sendPhoto(photoFile: File): String = withContext(Dispatchers.IO) {
+    suspend fun sendCard(cardJson: String): String = withContext(Dispatchers.IO) {
         val messageId = UUID.randomUUID().toString()
         val timestamp = System.currentTimeMillis()
         val localDeviceId = secureStorage.getLocalDeviceId()
         val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: throw IllegalStateException("Device not paired")
+        val outboundKey = secureStorage.getOutboundSessionKey() ?: throw IllegalStateException("Active session key not established")
 
-        val optimizedFile = compressImageFile(photoFile)
+        val plaintextBytes = cardJson.toByteArray(Charsets.UTF_8)
+        val envelope = MessageEnvelope.pack(
+            senderDeviceId = localDeviceId,
+            recipientDeviceId = peerDeviceId,
+            sequenceNumber = sequenceCounter++,
+            messageType = MessageType.CARD,
+            plaintext = plaintextBytes,
+            encryptionKey = outboundKey,
+            messageId = messageId,
+            timestamp = timestamp
+        )
 
         val localKey = getOrCreateDatabaseKey()
-        val localEncrypted = CryptoEngine.encrypt(localKey, optimizedFile.name.toByteArray(Charsets.UTF_8))
+        val localEncrypted = CryptoEngine.encrypt(localKey, plaintextBytes)
         val iv = localEncrypted.copyOfRange(0, 12)
         val tag = localEncrypted.copyOfRange(localEncrypted.size - 16, localEncrypted.size)
         val ciphertext = localEncrypted.copyOfRange(12, localEncrypted.size - 16)
@@ -183,7 +245,46 @@ class ChatRepository(
             nonce = Base64.getEncoder().encodeToString(iv),
             authTag = Base64.getEncoder().encodeToString(tag),
             deliveryStatus = DeliveryStatus.SENDING,
-            messageType = "PHOTO",
+            messageType = "CARD",
+            isIncoming = false
+        )
+        database.messageDao().insertMessage(entity)
+
+        val json = envelope.toJson()
+        val sentViaP2p = webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))
+        if (!sentViaP2p) {
+            signalingClient.sendE2eeEnvelope(json)
+        }
+        database.messageDao().updateDeliveryStatus(messageId, DeliveryStatus.SENT)
+        messageId
+    }
+
+    suspend fun sendPhoto(photoFile: File, isViewOnce: Boolean = false): String = withContext(Dispatchers.IO) {
+        val messageId = UUID.randomUUID().toString()
+        val timestamp = System.currentTimeMillis()
+        val localDeviceId = secureStorage.getLocalDeviceId()
+        val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: throw IllegalStateException("Device not paired")
+
+        val optimizedFile = compressImageFile(photoFile)
+
+        val localKey = getOrCreateDatabaseKey()
+        val localEncrypted = CryptoEngine.encrypt(localKey, optimizedFile.name.toByteArray(Charsets.UTF_8))
+        val iv = localEncrypted.copyOfRange(0, 12)
+        val tag = localEncrypted.copyOfRange(localEncrypted.size - 16, localEncrypted.size)
+        val ciphertext = localEncrypted.copyOfRange(12, localEncrypted.size - 16)
+
+        val msgType = if (isViewOnce) "VIEW_ONCE_PHOTO" else "PHOTO"
+
+        val entity = MessageEntity(
+            id = messageId,
+            timestamp = timestamp,
+            senderDeviceId = localDeviceId,
+            recipientDeviceId = peerDeviceId,
+            encryptedContent = Base64.getEncoder().encodeToString(ciphertext),
+            nonce = Base64.getEncoder().encodeToString(iv),
+            authTag = Base64.getEncoder().encodeToString(tag),
+            deliveryStatus = DeliveryStatus.SENDING,
+            messageType = msgType,
             isIncoming = false,
             mediaLocalPath = optimizedFile.absolutePath,
             mediaFileName = optimizedFile.name,
@@ -194,6 +295,7 @@ class ChatRepository(
         fileTransferManager.sendFile(
             file = optimizedFile,
             isPhoto = true,
+            isViewOnce = isViewOnce,
             transferId = messageId,
             nextSequenceNumber = { sequenceCounter++ }
         ) { envelope ->
@@ -332,8 +434,126 @@ class ChatRepository(
         sendMessage(text)
     }
 
-    suspend fun deleteMessage(messageId: String) = withContext(Dispatchers.IO) {
-        database.messageDao().deleteMessage(messageId)
+    suspend fun deleteMessage(messageId: String) = deleteMessageForMe(messageId)
+
+    suspend fun deleteMessageForMe(messageId: String) = withContext(Dispatchers.IO) {
+        val entity = database.messageDao().getMessageById(messageId)
+        if (entity != null) {
+            if (!entity.mediaLocalPath.isNullOrBlank()) {
+                try { File(entity.mediaLocalPath).delete() } catch (_: Exception) {}
+            }
+            database.messageDao().deleteMessage(messageId)
+        }
+    }
+
+    suspend fun deleteMessageForEveryone(messageId: String) = withContext(Dispatchers.IO) {
+        val entity = database.messageDao().getMessageById(messageId)
+        if (entity != null) {
+            if (!entity.mediaLocalPath.isNullOrBlank()) {
+                try { File(entity.mediaLocalPath).delete() } catch (_: Exception) {}
+            }
+            database.messageDao().deleteMessage(messageId)
+        }
+
+        try {
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@withContext
+            val outboundKey = secureStorage.getOutboundSessionKey() ?: return@withContext
+
+            val payload = JSONObject().apply {
+                put("messageId", messageId)
+            }.toString().toByteArray(Charsets.UTF_8)
+
+            val envelope = MessageEnvelope.pack(
+                senderDeviceId = localDeviceId,
+                recipientDeviceId = peerDeviceId,
+                sequenceNumber = sequenceCounter++,
+                messageType = MessageType.DELETE_MESSAGE,
+                plaintext = payload,
+                encryptionKey = outboundKey
+            )
+
+            val json = envelope.toJson()
+            if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun markViewOnceOpened(messageId: String, localPath: String?) = withContext(Dispatchers.IO) {
+        try {
+            if (!localPath.isNullOrBlank()) {
+                try { File(localPath).delete() } catch (_: Exception) {}
+            }
+            val entity = database.messageDao().getMessageById(messageId)
+            if (entity != null) {
+                val updated = entity.copy(
+                    messageType = "VIEW_ONCE_OPENED",
+                    deliveryStatus = DeliveryStatus.READ,
+                    mediaLocalPath = null
+                )
+                database.messageDao().updateMessage(updated)
+            }
+
+            val localDeviceId = secureStorage.getLocalDeviceId()
+            val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@withContext
+            val outboundKey = secureStorage.getOutboundSessionKey() ?: return@withContext
+
+            val payload = JSONObject().apply {
+                put("messageId", messageId)
+            }.toString().toByteArray(Charsets.UTF_8)
+
+            val envelope = MessageEnvelope.pack(
+                senderDeviceId = localDeviceId,
+                recipientDeviceId = peerDeviceId,
+                sequenceNumber = sequenceCounter++,
+                messageType = MessageType.VIEW_ONCE_OPENED,
+                plaintext = payload,
+                encryptionKey = outboundKey
+            )
+
+            val json = envelope.toJson()
+            if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                signalingClient.sendE2eeEnvelope(json)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun sendAudioSync(action: String, messageId: String?, fileName: String?, positionMs: Int) {
+        scope.launch {
+            try {
+                val localDeviceId = secureStorage.getLocalDeviceId()
+                val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
+                val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
+
+                val payload = JSONObject().apply {
+                    put("action", action)
+                    put("messageId", messageId ?: "")
+                    put("fileName", fileName ?: "")
+                    put("positionMs", positionMs)
+                }.toString().toByteArray(Charsets.UTF_8)
+
+                val envelope = MessageEnvelope.pack(
+                    senderDeviceId = localDeviceId,
+                    recipientDeviceId = peerDeviceId,
+                    sequenceNumber = sequenceCounter++,
+                    messageType = MessageType.AUDIO_SYNC,
+                    plaintext = payload,
+                    encryptionKey = outboundKey
+                )
+
+                val json = envelope.toJson()
+                if (!webRtcSessionManager.sendDataChannelMessage(json.toByteArray(Charsets.UTF_8))) {
+                    signalingClient.sendE2eeEnvelope(json)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     suspend fun clearConversation() = withContext(Dispatchers.IO) {
@@ -370,6 +590,10 @@ class ChatRepository(
     }
 
     private suspend fun handleIncomingRawEnvelope(jsonStr: String) = withContext(Dispatchers.IO) {
+        _isPeerOnline.value = true
+        val now = System.currentTimeMillis()
+        _peerLastSeenTimestamp.value = now
+        secureStorage.partnerLastSeenTimestamp = now
         try {
             val envelope = MessageEnvelope.fromJson(jsonStr)
             val expectedSenderId = secureStorage.getPairedPeerDeviceId() ?: return@withContext
@@ -401,7 +625,7 @@ class ChatRepository(
                         }
                     }
                 }
-                MessageType.TEXT -> {
+                MessageType.TEXT, MessageType.CARD -> {
                     _isPeerTyping.value = false
                     typingResetJob?.cancel()
 
@@ -413,6 +637,7 @@ class ChatRepository(
 
                     val isChatOpen = NotificationHelper.isChatVisible.get()
                     val status = if (isChatOpen) DeliveryStatus.READ else DeliveryStatus.DELIVERED
+                    val msgType = if (envelope.messageType == MessageType.CARD) "CARD" else "TEXT"
 
                     val entity = MessageEntity(
                         id = envelope.messageId,
@@ -423,7 +648,7 @@ class ChatRepository(
                         nonce = Base64.getEncoder().encodeToString(iv),
                         authTag = Base64.getEncoder().encodeToString(tag),
                         deliveryStatus = status,
-                        messageType = "TEXT",
+                        messageType = msgType,
                         isIncoming = true
                     )
                     database.messageDao().insertMessage(entity)
@@ -431,12 +656,12 @@ class ChatRepository(
                     if (isChatOpen) {
                         sendReadReceipt(envelope.messageId)
                     } else {
-                        val textPreview = String(decryptedBytes, Charsets.UTF_8)
+                        val textPreview = if (msgType == "CARD") "💌 Sent you a Card" else String(decryptedBytes, Charsets.UTF_8)
                         NotificationHelper.showIncomingMessageNotification(
                             context = context,
                             secureStorage = secureStorage,
                             messageText = textPreview,
-                            messageType = "TEXT"
+                            messageType = msgType
                         )
                     }
                 }
@@ -454,10 +679,27 @@ class ChatRepository(
                 MessageType.NAME_EXCHANGE -> {
                     try {
                         val json = JSONObject(String(decryptedBytes, Charsets.UTF_8))
-                        val partnerName = json.getString("displayName")
-                        if (partnerName.isNotBlank()) {
-                            secureStorage.setPartnerDisplayName(partnerName)
-                            _partnerDisplayName.value = partnerName
+                        if (json.has("displayName")) {
+                            val partnerName = json.getString("displayName")
+                            if (partnerName.isNotBlank()) {
+                                secureStorage.setPartnerDisplayName(partnerName)
+                                _partnerDisplayName.value = partnerName
+                            }
+                        }
+                        if (json.has("avatarBase64")) {
+                            val avatarBase64 = json.getString("avatarBase64")
+                            if (avatarBase64.isNotBlank()) {
+                                val avatarBytes = Base64.getDecoder().decode(avatarBase64)
+                                val partnerAvatarFile = File(context.filesDir, "partner_avatar_${System.currentTimeMillis()}.jpg")
+                                partnerAvatarFile.writeBytes(avatarBytes)
+                                secureStorage.partnerProfilePicturePath = partnerAvatarFile.absolutePath
+                                _partnerAvatarPath.value = partnerAvatarFile.absolutePath
+
+                                // Clean up older partner avatars
+                                context.filesDir.listFiles { _, name -> name.startsWith("partner_avatar_") && name != partnerAvatarFile.name }?.forEach {
+                                    try { it.delete() } catch (_: Throwable) {}
+                                }
+                            }
                         }
                     } catch (_: Exception) {}
                 }
@@ -477,6 +719,7 @@ class ChatRepository(
                         val status = if (isChatOpen) DeliveryStatus.READ else DeliveryStatus.DELIVERED
 
                         val msgType = when {
+                            completed.isViewOnce -> "VIEW_ONCE_PHOTO"
                             completed.isPhoto -> "PHOTO"
                             completed.isAudio -> "AUDIO"
                             else -> "FILE"
@@ -509,6 +752,53 @@ class ChatRepository(
                                 messageType = msgType
                             )
                         }
+                    }
+                }
+                MessageType.DELETE_MESSAGE -> {
+                    try {
+                        val json = JSONObject(String(decryptedBytes, Charsets.UTF_8))
+                        val targetMsgId = json.getString("messageId")
+                        val entity = database.messageDao().getMessageById(targetMsgId)
+                        if (entity != null) {
+                            if (!entity.mediaLocalPath.isNullOrBlank()) {
+                                try { File(entity.mediaLocalPath).delete() } catch (_: Exception) {}
+                            }
+                            database.messageDao().deleteMessage(targetMsgId)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                MessageType.VIEW_ONCE_OPENED -> {
+                    try {
+                        val json = JSONObject(String(decryptedBytes, Charsets.UTF_8))
+                        val targetMsgId = json.getString("messageId")
+                        val entity = database.messageDao().getMessageById(targetMsgId)
+                        if (entity != null) {
+                            if (!entity.mediaLocalPath.isNullOrBlank()) {
+                                try { File(entity.mediaLocalPath).delete() } catch (_: Exception) {}
+                            }
+                            val updated = entity.copy(
+                                messageType = "VIEW_ONCE_OPENED",
+                                deliveryStatus = DeliveryStatus.READ,
+                                mediaLocalPath = null
+                            )
+                            database.messageDao().updateMessage(updated)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                MessageType.AUDIO_SYNC -> {
+                    try {
+                        val json = JSONObject(String(decryptedBytes, Charsets.UTF_8))
+                        val action = json.getString("action")
+                        val msgId = json.optString("messageId")
+                        val fileName = json.optString("fileName")
+                        val positionMs = json.optInt("positionMs", 0)
+                        _audioSyncEvent.value = AudioSyncEvent(action, msgId, fileName, positionMs, System.currentTimeMillis())
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
                 }
                 else -> Unit
@@ -574,12 +864,22 @@ class ChatRepository(
 
     fun sendNameExchange() {
         scope.launch {
-            val myName = secureStorage.getMyDisplayName() ?: return@launch
+            val myName = secureStorage.getMyDisplayName() ?: "User"
             val localDeviceId = secureStorage.getLocalDeviceId()
             val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
             val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
 
-            val payload = JSONObject().put("displayName", myName).toString()
+            val payloadObj = JSONObject().apply {
+                put("displayName", myName)
+                val myPicPath = secureStorage.profilePicturePath
+                if (!myPicPath.isNullOrBlank()) {
+                    val avatarBytes = ProfileImageHelper.getAvatarBytesForSync(myPicPath)
+                    if (avatarBytes != null && avatarBytes.isNotEmpty()) {
+                        put("avatarBase64", Base64.getEncoder().encodeToString(avatarBytes))
+                    }
+                }
+            }
+            val payload = payloadObj.toString()
             val envelope = MessageEnvelope.pack(
                 senderDeviceId = localDeviceId,
                 recipientDeviceId = peerDeviceId,
@@ -600,17 +900,18 @@ class ChatRepository(
         scope.launch {
             val pending = database.messageDao().getPendingOutboundMessages()
             for (msg in pending) {
-                if (msg.messageType == "TEXT") {
+                if (msg.messageType == "TEXT" || msg.messageType == "CARD") {
                     val decrypted = decryptLocalContent(msg.encryptedContent, msg.nonce, msg.authTag)
                     val localDeviceId = secureStorage.getLocalDeviceId()
                     val peerDeviceId = secureStorage.getPairedPeerDeviceId() ?: return@launch
                     val outboundKey = secureStorage.getOutboundSessionKey() ?: return@launch
 
+                    val envType = if (msg.messageType == "CARD") MessageType.CARD else MessageType.TEXT
                     val envelope = MessageEnvelope.pack(
                         senderDeviceId = localDeviceId,
                         recipientDeviceId = peerDeviceId,
                         sequenceNumber = sequenceCounter++,
-                        messageType = MessageType.TEXT,
+                        messageType = envType,
                         plaintext = decrypted.toByteArray(Charsets.UTF_8),
                         encryptionKey = outboundKey,
                         messageId = msg.id,

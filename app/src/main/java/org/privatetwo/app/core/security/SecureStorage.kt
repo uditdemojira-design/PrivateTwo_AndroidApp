@@ -48,7 +48,7 @@ class SecureStorage(private val context: Context) {
         private const val KEY_LOCAL_PRIV_KEY_FALLBACK = "local_priv_key_fallback"
 
         // Privacy flags
-        private const val KEY_FLAG_SECURE = "flag_secure_enabled"
+        private const val KEY_FLAG_SECURE = "flag_secure_enabled_v2"
         private const val KEY_BIOMETRIC_LOCK = "biometric_lock_enabled"
         private const val KEY_STEALTH_NOTIFICATIONS = "stealth_notifications_enabled"
 
@@ -324,7 +324,7 @@ class SecureStorage(private val context: Context) {
     // --- Privacy Settings ---
 
     var isFlagSecureEnabled: Boolean
-        get() = prefs.getBoolean(KEY_FLAG_SECURE, true) // Enabled by default for privacy
+        get() = prefs.getBoolean(KEY_FLAG_SECURE, false) // Default to false so screenshots and UI are clearly visible; toggleable in settings
         set(value) = prefs.edit().putBoolean(KEY_FLAG_SECURE, value).apply()
 
     var isBiometricLockEnabled: Boolean
@@ -371,4 +371,8 @@ class SecureStorage(private val context: Context) {
     fun setSignalingUrl(url: String) {
         prefs.edit().putString("signaling_server_url", url.trim()).apply()
     }
+
+    var partnerLastSeenTimestamp: Long
+        get() = prefs.getLong("partner_last_seen_ts", 0L)
+        set(value) = prefs.edit().putLong("partner_last_seen_ts", value).apply()
 }

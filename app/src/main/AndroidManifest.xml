@@ -24,6 +24,9 @@
     <!-- Biometric Authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- In-App Auto-Update Installation -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Camera and Audio hardware features - set required=false for broad device support -->
     <uses-feature
         android:name="android.hardware.camera"
@@ -52,6 +55,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>

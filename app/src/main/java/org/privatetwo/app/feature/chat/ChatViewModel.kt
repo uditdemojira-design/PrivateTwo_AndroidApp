@@ -23,7 +23,11 @@ class ChatViewModel(
 
     val signalingState: StateFlow<SignalingConnectionState> = signalingClient.connectionState
     val isPeerTyping: StateFlow<Boolean> = chatRepository.isPeerTyping
+    val isPeerOnline: StateFlow<Boolean> = chatRepository.isPeerOnline
+    val peerLastSeenTimestamp: StateFlow<Long> = chatRepository.peerLastSeenTimestamp
     val partnerDisplayName: StateFlow<String?> = chatRepository.partnerDisplayName
+    val partnerAvatarPath: StateFlow<String?> = chatRepository.partnerAvatarPath
+    val audioSyncEvent: StateFlow<AudioSyncEvent?> = chatRepository.audioSyncEvent
 
     fun sendNameExchange() {
         chatRepository.sendNameExchange()
@@ -46,6 +50,16 @@ class ChatViewModel(
         }
     }
 
+    fun sendCard(cardJson: String) {
+        viewModelScope.launch {
+            try {
+                chatRepository.sendCard(cardJson)
+            } catch (e: Exception) {
+                // Handled in repository
+            }
+        }
+    }
+
     fun retryMessage(messageId: String) {
         viewModelScope.launch {
             chatRepository.retryMessage(messageId)
@@ -53,9 +67,23 @@ class ChatViewModel(
     }
 
     fun deleteMessage(messageId: String) {
+        deleteMessageForMe(messageId)
+    }
+
+    fun deleteMessageForMe(messageId: String) {
         viewModelScope.launch {
-            chatRepository.deleteMessage(messageId)
+            chatRepository.deleteMessageForMe(messageId)
         }
+    }
+
+    fun deleteMessageForEveryone(messageId: String) {
+        viewModelScope.launch {
+            chatRepository.deleteMessageForEveryone(messageId)
+        }
+    }
+
+    fun sendAudioSync(action: String, messageId: String?, fileName: String?, positionMs: Int) {
+        chatRepository.sendAudioSync(action, messageId, fileName, positionMs)
     }
 
     fun clearConversation() {
@@ -64,13 +92,19 @@ class ChatViewModel(
         }
     }
 
-    fun sendPhoto(photoFile: File) {
+    fun sendPhoto(photoFile: File, isViewOnce: Boolean = false) {
         viewModelScope.launch {
             try {
-                chatRepository.sendPhoto(photoFile)
+                chatRepository.sendPhoto(photoFile, isViewOnce)
             } catch (e: Exception) {
                 // Handled in repository
             }
+        }
+    }
+
+    fun markViewOnceOpened(messageId: String, localPath: String?) {
+        viewModelScope.launch {
+            chatRepository.markViewOnceOpened(messageId, localPath)
         }
     }
 

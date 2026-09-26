@@ -20,7 +20,11 @@ enum class MessageType {
     READ_RECEIPT,
     NAME_EXCHANGE,
     SIGNALING,
-    TYPING_INDICATOR
+    TYPING_INDICATOR,
+    DELETE_MESSAGE,
+    AUDIO_SYNC,
+    CARD,
+    VIEW_ONCE_OPENED
 }
 
 /**
@@ -182,15 +186,15 @@ data class MessageEnvelope(
  * Validates incoming message envelopes for freshness and protects against replay attacks.
  */
 class ReplayProtectionValidator(
-    private val maxTimeDriftMs: Long = 120_000L, // 2 minutes
+    private val maxTimeDriftMs: Long = 7 * 24 * 60 * 60 * 1000L, // 7 days (allows queued offline messages)
+    private val maxFutureDriftMs: Long = 300_000L, // 5 minutes tolerance for phone clock differences
     private val maxSeenCacheSize: Int = 10_000
 ) {
     private val seenMessageIds = Collections.synchronizedSet(LinkedHashSet<String>())
-    private var lastSeenSequenceNumber: Long = -1
 
     @Synchronized
     fun validate(envelope: MessageEnvelope, currentTimeMs: Long = System.currentTimeMillis()): ValidationResult {
-        // 1. Check duplicate message ID
+        // 1. Check duplicate message ID (strictly prevents message replay)
         if (seenMessageIds.contains(envelope.messageId)) {
             return ValidationResult.Rejected("Duplicate message ID detected (replay attack)")
         }
@@ -200,15 +204,8 @@ class ReplayProtectionValidator(
         if (timeDiff > maxTimeDriftMs) {
             return ValidationResult.Rejected("Message expired (timestamp drift too high: ${timeDiff}ms)")
         }
-        if (timeDiff < -30_000L) { // More than 30s in future
+        if (timeDiff < -maxFutureDriftMs) {
             return ValidationResult.Rejected("Message from the future (timestamp drift: ${timeDiff}ms)")
-        }
-
-        // 3. Monotonic sequence check for strict ordering
-        if (envelope.sequenceNumber <= lastSeenSequenceNumber) {
-            return ValidationResult.Rejected(
-                "Stale sequence number ${envelope.sequenceNumber} <= $lastSeenSequenceNumber (possible replay)"
-            )
         }
 
         // Add to cache & evict oldest if needed
@@ -221,14 +218,12 @@ class ReplayProtectionValidator(
             }
         }
 
-        lastSeenSequenceNumber = envelope.sequenceNumber
         return ValidationResult.Accepted
     }
 
     @Synchronized
     fun reset() {
         seenMessageIds.clear()
-        lastSeenSequenceNumber = -1
     }
 }
 

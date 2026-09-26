@@ -1,5 +1,6 @@
 package org.privatetwo.app.feature.chat
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -9,10 +10,13 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import android.media.MediaScannerConnection
@@ -26,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import org.privatetwo.app.feature.chat.cards.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,9 +55,12 @@ import org.privatetwo.app.feature.privacy.rememberAntiPeepTiltState
 import android.content.Intent
 import android.os.Environment
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import org.privatetwo.app.core.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -96,21 +104,35 @@ fun ChatScreen(
     var isStealthMaskActive by remember { mutableStateOf(secureStorage?.isStealthMessagesEnabled ?: false) }
     var louverOpacity by remember { mutableStateOf(secureStorage?.privacyFilterOpacity ?: 0.50f) }
     var showPrivacySheet by remember { mutableStateOf(false) }
-    var isTiltDismissedLocally by remember { mutableStateOf(false) }
+
+    // Anti-Peep Tilt Shield Locking: once extreme tilt is triggered, it latches
+    // and requires biometric/device unlock to dismiss. Moving the phone upright does not auto-dismiss!
+    var isTiltLocked by remember { mutableStateOf(false) }
     val isTiltRaw by rememberAntiPeepTiltState(isAntiPeepTiltEnabled)
-    val isTiltActive = isTiltRaw && !isTiltDismissedLocally
     LaunchedEffect(isTiltRaw) {
-        if (!isTiltRaw) isTiltDismissedLocally = false
+        if (isTiltRaw) {
+            isTiltLocked = true
+        }
     }
 
     val messages by viewModel.messages.collectAsState()
     val signalingState by viewModel.signalingState.collectAsState()
     val isPeerTyping by viewModel.isPeerTyping.collectAsState()
+    val isPeerOnline by viewModel.isPeerOnline.collectAsState()
+    val peerLastSeenTimestamp by viewModel.peerLastSeenTimestamp.collectAsState()
+    val audioSyncEvent by viewModel.audioSyncEvent.collectAsState()
 
     var inputText by remember { mutableStateOf("") }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
+    var messagePendingDeletion by remember { mutableStateOf<ChatMessage?>(null) }
+    var showCardComposerSheet by remember { mutableStateOf(false) }
+    var fullscreenCardData by remember { mutableStateOf<PartnerCardData?>(null) }
+
+    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
+    var isViewOnceSelected by remember { mutableStateOf(false) }
+    var activeViewOnceMessage by remember { mutableStateOf<ChatMessage?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -121,7 +143,8 @@ fun ChatScreen(
             val inputStream = context.contentResolver.openInputStream(it)
             val tempFile = File(context.cacheDir, "send_photo_${System.currentTimeMillis()}.jpg")
             FileOutputStream(tempFile).use { out -> inputStream?.copyTo(out) }
-            viewModel.sendPhoto(tempFile)
+            pendingPhotoFile = tempFile
+            isViewOnceSelected = false
         }
     }
 
@@ -129,8 +152,9 @@ fun ChatScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
+            val originalName = FileUtils.getFileNameFromUri(context, it)
             val inputStream = context.contentResolver.openInputStream(it)
-            val tempFile = File(context.cacheDir, "send_file_${System.currentTimeMillis()}.bin")
+            val tempFile = File(context.cacheDir, "send_${System.currentTimeMillis()}_$originalName")
             FileOutputStream(tempFile).use { out -> inputStream?.copyTo(out) }
             viewModel.sendFile(tempFile)
         }
@@ -140,48 +164,29 @@ fun ChatScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
+            val originalName = FileUtils.getFileNameFromUri(context, it) ?: "audio_${System.currentTimeMillis()}.mp3"
             val inputStream = context.contentResolver.openInputStream(it)
-            val tempFile = File(context.cacheDir, "send_audio_${System.currentTimeMillis()}.mp3")
+            val tempFile = File(context.cacheDir, originalName)
             FileOutputStream(tempFile).use { out -> inputStream?.copyTo(out) }
             viewModel.sendAudio(tempFile)
         }
     }
 
     var fullScreenPhotoPath by remember { mutableStateOf<String?>(null) }
+    var showFullscreenPartnerAvatar by remember { mutableStateOf(false) }
 
-    var partnerPhotoPath by remember {
-        mutableStateOf(secureStorage?.partnerProfilePicturePath ?: secureStorage?.profilePicturePath)
+    // Partner Info (Synced via E2EE exchange)
+    val livePartnerAvatarPath by viewModel.partnerAvatarPath.collectAsState()
+    val livePartnerDisplayName by viewModel.partnerDisplayName.collectAsState()
+
+    val effectivePartnerPhoto = livePartnerAvatarPath ?: secureStorage?.partnerProfilePicturePath
+    var partnerPhotoVersion by remember { mutableIntStateOf(0) }
+    val partnerAvatarBitmap = remember(effectivePartnerPhoto, livePartnerAvatarPath, partnerPhotoVersion) {
+        ProfileImageHelper.loadAvatarBitmap(effectivePartnerPhoto)
     }
-    var avatarVersion by remember { mutableIntStateOf(0) }
+
     var showContactProfileDialog by remember { mutableStateOf(false) }
-    var showEditNameDialog by remember { mutableStateOf(false) }
-    var tempNameInput by remember { mutableStateOf("") }
-    var currentPartnerName by remember(partnerDisplayName) {
-        mutableStateOf(partnerDisplayName ?: secureStorage?.getPartnerDisplayName() ?: "Private Partner")
-    }
-
-    val avatarBitmap = remember(partnerPhotoPath, avatarVersion) {
-        ProfileImageHelper.loadAvatarBitmap(partnerPhotoPath)
-    }
-
-    val contactPhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            val saved = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
-            if (saved != null) {
-                secureStorage?.partnerProfilePicturePath = saved
-                if (secureStorage?.profilePicturePath.isNullOrBlank()) {
-                    secureStorage?.profilePicturePath = saved
-                }
-                partnerPhotoPath = saved
-                avatarVersion++
-                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
+    val effectivePartnerName = livePartnerDisplayName ?: partnerDisplayName ?: secureStorage?.getPartnerDisplayName() ?: "Private Partner"
 
     LaunchedEffect(messages.size, isPeerTyping) {
         val totalCount = messages.size + (if (isPeerTyping) 1 else 0)
@@ -192,12 +197,12 @@ fun ChatScreen(
     }
 
     AntiPeepShieldOverlay(
-        isTiltBlackoutActive = isTiltActive,
+        isTiltBlackoutActive = isTiltLocked,
         isManualBlackoutActive = isManualBlackoutActive,
         isLouverFilterActive = isLouverFilterActive,
         louverOpacity = louverOpacity,
         isReadingCurtainActive = isReadingCurtainActive,
-        onDismissTilt = { isTiltDismissedLocally = true },
+        onDismissTilt = { isTiltLocked = false },
         onDismissManualBlackout = { isManualBlackoutActive = false },
         onDismissReadingCurtain = {
             isReadingCurtainActive = false
@@ -220,20 +225,26 @@ fun ChatScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showContactProfileDialog = true }
-                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 2.dp)
                         ) {
                             Surface(
                                 shape = CircleShape,
                                 color = Color(0xFF1E2B33),
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        if (partnerAvatarBitmap != null || !effectivePartnerPhoto.isNullOrBlank()) {
+                                            showFullscreenPartnerAvatar = true
+                                        } else {
+                                            showContactProfileDialog = true
+                                        }
+                                    }
                             ) {
-                                if (avatarBitmap != null) {
+                                if (partnerAvatarBitmap != null) {
                                     Image(
-                                        bitmap = avatarBitmap.asImageBitmap(),
-                                        contentDescription = "Profile Picture",
+                                        bitmap = partnerAvatarBitmap.asImageBitmap(),
+                                        contentDescription = "Partner Avatar",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
                                     )
@@ -241,7 +252,7 @@ fun ChatScreen(
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = Icons.Default.Person,
-                                            contentDescription = "Profile",
+                                            contentDescription = "Partner",
                                             tint = Color(0xFF8696A0),
                                             modifier = Modifier.size(24.dp)
                                         )
@@ -249,9 +260,14 @@ fun ChatScreen(
                                 }
                             }
 
-                            Column {
+                            Column(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { showContactProfileDialog = true }
+                                    .padding(vertical = 2.dp, horizontal = 4.dp)
+                            ) {
                                 Text(
-                                    text = currentPartnerName,
+                                    text = effectivePartnerName,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
@@ -272,15 +288,16 @@ fun ChatScreen(
                                         )
                                     }
                                 } else {
+                                    val (dotColor, statusText) = when {
+                                        signalingState == SignalingConnectionState.CONNECTING -> Pair(Color(0xFFF57F17), "Connecting…")
+                                        signalingState == SignalingConnectionState.DISCONNECTED -> Pair(Color.Gray, "Waiting for network…")
+                                        isPeerOnline -> Pair(WhatsAppTypingGreen, "Online")
+                                        else -> Pair(Color(0xFF8696A0), formatLastSeen(peerLastSeenTimestamp))
+                                    }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        val (dotColor, statusText) = when (signalingState) {
-                                            SignalingConnectionState.CONNECTED -> Pair(WhatsAppTypingGreen, "Connected")
-                                            SignalingConnectionState.CONNECTING -> Pair(Color(0xFFF57F17), "Connecting…")
-                                            SignalingConnectionState.DISCONNECTED -> Pair(Color.Gray, "Offline")
-                                        }
                                         Surface(
                                             shape = CircleShape,
                                             color = dotColor,
@@ -289,7 +306,8 @@ fun ChatScreen(
                                         Text(
                                             text = statusText,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = WhatsAppTime
+                                            color = if (isPeerOnline) WhatsAppTypingGreen else WhatsAppTime,
+                                            fontWeight = if (isPeerOnline) FontWeight.SemiBold else FontWeight.Normal
                                         )
                                     }
                                 }
@@ -490,6 +508,19 @@ fun ChatScreen(
                                     unfocusedTextColor = WhatsAppText
                                 )
                             )
+
+                            // Partner Card Icon (Love, Sorry, Thank You, Wishes)
+                            IconButton(
+                                onClick = { showCardComposerSheet = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.CardGiftcard,
+                                    contentDescription = "Send Partner Card",
+                                    tint = Color(0xFFFF5252),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
 
                             // Music / Song Icon
                             IconButton(
@@ -733,8 +764,14 @@ fun ChatScreen(
                                     isStealthMaskActive = isStealthMaskActive,
                                     isPrivacyShieldActive = isLouverFilterActive,
                                     onPhotoClick = { fullScreenPhotoPath = it },
+                                    onViewOnceClick = { activeViewOnceMessage = it },
+                                    onCardClick = { fullscreenCardData = it },
                                     onRetry = { viewModel.retryMessage(message.id) },
-                                    onDelete = { viewModel.deleteMessage(message.id) }
+                                    onDeleteClick = { messagePendingDeletion = message },
+                                    audioSyncEvent = audioSyncEvent,
+                                    onSendAudioSync = { action, msgId, fileName, pos ->
+                                        viewModel.sendAudioSync(action, msgId, fileName, pos)
+                                    }
                                 )
                             }
 
@@ -772,6 +809,82 @@ fun ChatScreen(
             )
         }
 
+        // WhatsApp-style Delete for Everyone / Delete for Me dialog
+        if (messagePendingDeletion != null) {
+            val targetMsg = messagePendingDeletion!!
+            val isOutgoing = !targetMsg.isIncoming
+            AlertDialog(
+                onDismissRequest = { messagePendingDeletion = null },
+                containerColor = Color(0xFF202C33),
+                shape = RoundedCornerShape(16.dp),
+                title = {
+                    Text(
+                        text = "Delete message?",
+                        color = WhatsAppText,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = if (isOutgoing) "You can delete this message for everyone or delete it for yourself only." else "Delete this message for yourself?",
+                        color = WhatsAppTime,
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (isOutgoing) {
+                            TextButton(
+                                onClick = {
+                                    viewModel.deleteMessageForEveryone(targetMsg.id)
+                                    messagePendingDeletion = null
+                                }
+                            ) {
+                                Text("Delete for everyone", color = WhatsAppTypingGreen, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteMessageForMe(targetMsg.id)
+                                messagePendingDeletion = null
+                            }
+                        ) {
+                            Text("Delete for me", color = WhatsAppTypingGreen, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        }
+                        TextButton(
+                            onClick = { messagePendingDeletion = null }
+                        ) {
+                            Text("Cancel", color = WhatsAppTime, fontSize = 15.sp)
+                        }
+                    }
+                },
+                dismissButton = null
+            )
+        }
+
+        // Card Composer BottomSheet
+        if (showCardComposerSheet) {
+            PartnerCardBottomSheet(
+                onDismiss = { showCardComposerSheet = false },
+                onSendCard = { card ->
+                    viewModel.sendCard(card.toJson())
+                }
+            )
+        }
+
+        // Fullscreen Interactive Card Celebration Dialog
+        if (fullscreenCardData != null) {
+            PartnerCardFullscreenDialog(
+                card = fullscreenCardData!!,
+                onDismiss = { fullscreenCardData = null }
+            )
+        }
+
         if (showPrivacySheet) {
             PrivacyControlsBottomSheet(
                 isLouverActive = isLouverFilterActive,
@@ -801,347 +914,309 @@ fun ChatScreen(
             )
         }
 
+        if (pendingPhotoFile != null) {
+            PhotoSendPreviewDialog(
+                photoFile = pendingPhotoFile!!,
+                isViewOnce = isViewOnceSelected,
+                onToggleViewOnce = { isViewOnceSelected = !isViewOnceSelected },
+                onDismiss = {
+                    pendingPhotoFile?.delete()
+                    pendingPhotoFile = null
+                },
+                onSend = {
+                    viewModel.sendPhoto(pendingPhotoFile!!, isViewOnce = isViewOnceSelected)
+                    pendingPhotoFile = null
+                }
+            )
+        }
+
+        if (activeViewOnceMessage != null && activeViewOnceMessage?.mediaLocalPath != null) {
+            FullscreenPhotoDialog(
+                photoPath = activeViewOnceMessage!!.mediaLocalPath!!,
+                isViewOnce = true,
+                onDismiss = {
+                    val msg = activeViewOnceMessage
+                    activeViewOnceMessage = null
+                    if (msg != null && msg.isIncoming) {
+                        viewModel.markViewOnceOpened(msg.id, msg.mediaLocalPath)
+                    }
+                }
+            )
+        }
+
         if (fullScreenPhotoPath != null) {
             FullscreenPhotoDialog(
                 photoPath = fullScreenPhotoPath!!,
+                isViewOnce = false,
                 onDismiss = { fullScreenPhotoPath = null }
             )
         }
 
+        if (showFullscreenPartnerAvatar) {
+            FullscreenPhotoDialog(
+                photoPath = effectivePartnerPhoto,
+                bitmapInput = partnerAvatarBitmap,
+                title = effectivePartnerName,
+                isViewOnce = false,
+                onDismiss = { showFullscreenPartnerAvatar = false }
+            )
+        }
+
         if (showContactProfileDialog) {
-            Dialog(
+            ModalBottomSheet(
                 onDismissRequest = { showContactProfileDialog = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
+                containerColor = Color(0xFF1F2C34),
+                contentColor = Color.White
             ) {
-                Surface(
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth(0.92f)
-                        .wrapContentHeight(),
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF1F2C34),
-                    tonalElevation = 8.dp
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Header with title and close button
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Contact Info",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            IconButton(
-                                onClick = { showContactProfileDialog = false },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
-                                    tint = Color(0xFF8696A0)
-                                )
-                            }
-                        }
-
-                        // Large Circular Profile Avatar (Tap to change)
-                        Box(
-                            modifier = Modifier
-                                .size(110.dp)
-                                .clickable { contactPhotoLauncher.launch("image/*") },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFF2A3942),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                if (avatarBitmap != null) {
-                                    Image(
-                                        bitmap = avatarBitmap.asImageBitmap(),
-                                        contentDescription = "Contact Photo",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = "Contact Photo",
-                                            tint = Color(0xFF8696A0),
-                                            modifier = Modifier.size(60.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Camera badge overlay
-                            Surface(
-                                shape = CircleShape,
-                                color = WhatsAppTypingGreen,
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .align(Alignment.BottomEnd)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.CameraAlt,
-                                        contentDescription = "Change Photo",
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Contact Name with Edit option
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = currentPartnerName,
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            IconButton(
-                                onClick = {
-                                    tempNameInput = currentPartnerName
-                                    showEditNameDialog = true
-                                },
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .padding(start = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Name",
-                                    tint = WhatsAppTypingGreen,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-
-                        // Connection Status Pill
-                        val (badgeBg, badgeText, badgeColor) = when (signalingState) {
-                            SignalingConnectionState.CONNECTED -> Triple(Color(0xFF103629), "Online • Connected", WhatsAppTypingGreen)
-                            SignalingConnectionState.CONNECTING -> Triple(Color(0xFF332B10), "Connecting…", Color(0xFFF57F17))
-                            SignalingConnectionState.DISCONNECTED -> Triple(Color(0xFF262D31), "Offline", Color(0xFF8696A0))
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = badgeBg
-                        ) {
-                            Text(
-                                text = badgeText,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = badgeColor,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                            )
-                        }
-
-                        // Encryption & Fingerprint Info Box
-                        val peerId = secureStorage?.getPairedPeerDeviceId()
-                        if (!peerId.isNullOrBlank()) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFF111B21),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = null,
-                                            tint = WhatsAppTypingGreen,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Text(
-                                            text = "End-to-End Encrypted (ECDH P-256)",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = WhatsAppTypingGreen,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                    Text(
-                                        text = "Fingerprint: $peerId",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF8696A0),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-
-                        // Quick Action Shortcuts: Audio, Video, Privacy Shield
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            // Audio Call
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        showContactProfileDialog = false
-                                        onStartAudioCall()
-                                    }
-                                    .padding(8.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFF202C33),
-                                    modifier = Modifier.size(46.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Phone,
-                                            contentDescription = "Audio Call",
-                                            tint = WhatsAppTypingGreen,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Audio", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                            }
-
-                            // Video Call
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        showContactProfileDialog = false
-                                        onStartVideoCall()
-                                    }
-                                    .padding(8.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFF202C33),
-                                    modifier = Modifier.size(46.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Videocam,
-                                            contentDescription = "Video Call",
-                                            tint = WhatsAppTypingGreen,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Video", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                            }
-
-                            // Privacy Shield Settings
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        showContactProfileDialog = false
-                                        showPrivacySheet = true
-                                    }
-                                    .padding(8.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFF202C33),
-                                    modifier = Modifier.size(46.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Shield,
-                                            contentDescription = "Privacy Shield",
-                                            tint = WhatsAppTypingGreen,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Shield", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                            }
-                        }
-
-                        // Button to Set/Change Photo
-                        Button(
-                            onClick = { contactPhotoLauncher.launch("image/*") },
-                            colors = ButtonDefaults.buttonColors(containerColor = WhatsAppTypingGreen),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        Text(
+                            text = "Contact info",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        IconButton(
+                            onClick = { showContactProfileDialog = false },
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.CameraAlt,
-                                contentDescription = null,
-                                tint = Color(0xFF111B21),
-                                modifier = Modifier.size(18.dp)
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color(0xFF8696A0)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                    }
+
+                    // PARTNER PROFILE CARD (WhatsApp style)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF111B21))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            // Partner Avatar (Tapping expands to full-screen view like WhatsApp)
+                            Box(
+                                modifier = Modifier
+                                    .size(110.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        if (partnerAvatarBitmap != null || !effectivePartnerPhoto.isNullOrBlank()) {
+                                            showContactProfileDialog = false
+                                            showFullscreenPartnerAvatar = true
+                                        } else {
+                                            Toast.makeText(context, "No profile photo", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF2A3942),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    if (partnerAvatarBitmap != null) {
+                                        Image(
+                                            bitmap = partnerAvatarBitmap.asImageBitmap(),
+                                            contentDescription = "Partner Photo",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = "Partner Photo",
+                                                tint = Color(0xFF8696A0),
+                                                modifier = Modifier.size(60.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Partner Name (Read-only, viewer cannot edit partner's name)
                             Text(
-                                text = if (avatarBitmap != null) "Change Profile Photo" else "Set Profile Photo",
-                                color = Color(0xFF111B21),
-                                fontWeight = FontWeight.Bold
+                                text = effectivePartnerName,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                textAlign = TextAlign.Center
                             )
+
+                            // Status Pill (WhatsApp Online / Offline / Last Seen)
+                            val (badgeBg, badgeText, badgeColor) = when {
+                                signalingState == SignalingConnectionState.CONNECTING -> Triple(Color(0xFF332B10), "Connecting…", Color(0xFFF57F17))
+                                signalingState == SignalingConnectionState.DISCONNECTED -> Triple(Color(0xFF262D31), "Waiting for network…", Color(0xFF8696A0))
+                                isPeerOnline -> Triple(Color(0xFF103629), "Online", WhatsAppTypingGreen)
+                                else -> Triple(Color(0xFF262D31), formatLastSeen(peerLastSeenTimestamp), Color(0xFF8696A0))
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = badgeBg
+                            ) {
+                                Text(
+                                    text = badgeText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                )
+                            }
+
+                            // Encryption & Fingerprint Info Box
+                            val peerId = secureStorage?.getPairedPeerDeviceId()
+                            if (!peerId.isNullOrBlank()) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF1A2329),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Lock,
+                                                contentDescription = null,
+                                                tint = WhatsAppTypingGreen,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = "End-to-End Encrypted (ECDH P-256)",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = WhatsAppTypingGreen,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Text(
+                                            text = "Fingerprint: $peerId",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF8696A0),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Quick Action Shortcuts: Audio, Video, Privacy Shield
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                // Audio Call
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            showContactProfileDialog = false
+                                            onStartAudioCall()
+                                        }
+                                        .padding(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFF202C33),
+                                        modifier = Modifier.size(46.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Phone,
+                                                contentDescription = "Audio Call",
+                                                tint = WhatsAppTypingGreen,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Audio", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                }
+
+                                // Video Call
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            showContactProfileDialog = false
+                                            onStartVideoCall()
+                                        }
+                                        .padding(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFF202C33),
+                                        modifier = Modifier.size(46.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Videocam,
+                                                contentDescription = "Video Call",
+                                                tint = WhatsAppTypingGreen,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Video", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                }
+
+                                // Privacy Shield Settings
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            showContactProfileDialog = false
+                                            showPrivacySheet = true
+                                        }
+                                        .padding(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFF202C33),
+                                        modifier = Modifier.size(46.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shield,
+                                                contentDescription = "Privacy Shield",
+                                                tint = WhatsAppTypingGreen,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Shield", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-
-        if (showEditNameDialog) {
-            AlertDialog(
-                onDismissRequest = { showEditNameDialog = false },
-                title = { Text("Edit Contact Name") },
-                text = {
-                    OutlinedTextField(
-                        value = tempNameInput,
-                        onValueChange = { tempNameInput = it },
-                        label = { Text("Contact Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            val trimmed = tempNameInput.trim()
-                            if (trimmed.isNotBlank()) {
-                                secureStorage?.setPartnerDisplayName(trimmed)
-                                currentPartnerName = trimmed
-                                Toast.makeText(context, "Contact name updated", Toast.LENGTH_SHORT).show()
-                            }
-                            showEditNameDialog = false
-                        }
-                    ) {
-                        Text("Save")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showEditNameDialog = false }) {
-                        Text("Cancel")
-                    }
-                }
-            )
         }
     }
 }
@@ -1237,8 +1312,12 @@ fun MessageBubble(
     isStealthMaskActive: Boolean = false,
     isPrivacyShieldActive: Boolean = false,
     onPhotoClick: ((String) -> Unit)? = null,
+    onViewOnceClick: ((ChatMessage) -> Unit)? = null,
+    onCardClick: ((PartnerCardData) -> Unit)? = null,
     onRetry: () -> Unit,
-    onDelete: () -> Unit
+    onDeleteClick: () -> Unit,
+    audioSyncEvent: AudioSyncEvent? = null,
+    onSendAudioSync: ((action: String, messageId: String?, fileName: String?, positionMs: Int) -> Unit)? = null
 ) {
     val isOutgoing = !message.isIncoming
     val alignment = if (isOutgoing) Alignment.End else Alignment.Start
@@ -1366,7 +1445,48 @@ fun MessageBubble(
                                 message.mediaLocalPath.endsWith(".webp", ignoreCase = true)
                             ))) && message.mediaLocalPath != null
 
-                        if (isPhoto) {
+                        if (message.messageType == "VIEW_ONCE_PHOTO" || message.messageType == "VIEW_ONCE_OPENED") {
+                            val isViewOnceOpened = message.messageType == "VIEW_ONCE_OPENED" || (message.isIncoming && message.status == DeliveryStatus.READ && message.mediaLocalPath == null)
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0x33000000),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (!isViewOnceOpened && message.mediaLocalPath != null) {
+                                                onViewOnceClick?.invoke(message)
+                                            } else {
+                                                Toast.makeText(context, "This view-once photo has expired", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        onLongClick = { onDeleteClick() }
+                                    )
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    ViewOnceIcon(isOpened = isViewOnceOpened)
+                                    Column {
+                                        Text(
+                                            text = if (isViewOnceOpened) "Opened" else "Photo",
+                                            color = if (isViewOnceOpened) WhatsAppTime else WhatsAppText,
+                                            fontWeight = if (isViewOnceOpened) FontWeight.Normal else FontWeight.Bold,
+                                            fontStyle = if (isViewOnceOpened) FontStyle.Italic else FontStyle.Normal,
+                                            fontSize = 15.sp
+                                        )
+                                        Text(
+                                            text = if (isViewOnceOpened) "Photo expired" else if (isOutgoing) "View once photo" else "1-time view • Tap to see",
+                                            color = WhatsAppTime,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (isPhoto) {
                             val bitmap = remember(message.mediaLocalPath) {
                                 try {
                                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1389,25 +1509,79 @@ fun MessageBubble(
                                         .fillMaxWidth()
                                         .heightIn(max = 280.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            onPhotoClick?.invoke(message.mediaLocalPath!!)
-                                        }
+                                        .combinedClickable(
+                                            onClick = {
+                                                onPhotoClick?.invoke(message.mediaLocalPath!!)
+                                            },
+                                            onLongClick = { onDeleteClick() }
+                                        )
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
-                        } else if (message.messageType == "AUDIO") {
+                        } else if (message.messageType == "CARD") {
+                            val cardData = remember(message.text) { PartnerCardData.fromJson(message.text) }
+                            if (cardData != null) {
+                                PartnerCardBubble(
+                                    card = cardData,
+                                    onClick = { onCardClick?.invoke(cardData) },
+                                    onLongClick = { onDeleteClick() }
+                                )
+                            }
+                        } else if (message.messageType == "AUDIO" || (
+                            message.mediaLocalPath != null && (
+                                message.mediaLocalPath.endsWith(".mp3", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".m4a", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".wav", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".ogg", ignoreCase = true) ||
+                                message.mediaLocalPath.endsWith(".aac", ignoreCase = true) ||
+                                (message.mediaFileName ?: "").run {
+                                    endsWith(".mp3", ignoreCase = true) ||
+                                    endsWith(".m4a", ignoreCase = true) ||
+                                    endsWith(".wav", ignoreCase = true) ||
+                                    endsWith(".ogg", ignoreCase = true) ||
+                                    endsWith(".aac", ignoreCase = true)
+                                }
+                            )
+                        )) {
                             AudioPlayerBubble(
                                 filePath = message.mediaLocalPath,
                                 fileName = message.mediaFileName ?: "Audio Song",
                                 fileSize = message.mediaFileSize,
-                                isOutgoing = isOutgoing
+                                isOutgoing = isOutgoing,
+                                messageId = message.id,
+                                audioSyncEvent = audioSyncEvent,
+                                onSendSync = onSendAudioSync,
+                                onLongClick = { onDeleteClick() }
                             )
                         } else if (message.messageType == "FILE" || (message.mediaLocalPath != null && !isPhoto)) {
+                            val fileNameLower = (message.mediaFileName ?: message.mediaLocalPath ?: "").lowercase()
+                            val isVideo = fileNameLower.endsWith(".mp4") || fileNameLower.endsWith(".mkv") || fileNameLower.endsWith(".webm") || fileNameLower.endsWith(".3gp") || fileNameLower.endsWith(".avi") || fileNameLower.endsWith(".mov")
+                            val isAudioFile = fileNameLower.endsWith(".mp3") || fileNameLower.endsWith(".m4a") || fileNameLower.endsWith(".wav") || fileNameLower.endsWith(".ogg") || fileNameLower.endsWith(".aac")
+                            val isPdf = fileNameLower.endsWith(".pdf")
+                            val fileIcon = when {
+                                isVideo -> Icons.Default.PlayCircle
+                                isAudioFile -> Icons.Default.MusicNote
+                                isPdf -> Icons.Default.PictureAsPdf
+                                else -> Icons.AutoMirrored.Filled.InsertDriveFile
+                            }
+                            val fileSubtitle = when {
+                                isVideo -> "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • Video • Tap to Play"
+                                isAudioFile -> "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • Audio • Tap to Play"
+                                isPdf -> "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • PDF • Tap to Open"
+                                else -> "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • Tap to open"
+                            }
+
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0x22000000),
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            FileUtils.openFile(context, message.mediaLocalPath, message.mediaFileName)
+                                        },
+                                        onLongClick = { onDeleteClick() }
+                                    )
                                     .padding(bottom = 6.dp)
                             ) {
                                 Row(
@@ -1416,56 +1590,20 @@ fun MessageBubble(
                                     modifier = Modifier.padding(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
-                                        contentDescription = "File",
+                                        imageVector = fileIcon,
+                                        contentDescription = "Open File",
                                         tint = WhatsAppTypingGreen,
                                         modifier = Modifier
-                                            .size(30.dp)
+                                            .size(32.dp)
                                             .clickable {
-                                                if (message.mediaLocalPath != null) {
-                                                    try {
-                                                        val file = File(message.mediaLocalPath)
-                                                        if (file.exists()) {
-                                                            val uri = FileProvider.getUriForFile(
-                                                                context,
-                                                                "${context.packageName}.fileprovider",
-                                                                file
-                                                            )
-                                                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                                                setDataAndType(uri, "*/*")
-                                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                            }
-                                                            context.startActivity(Intent.createChooser(intent, "Open file with"))
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Cannot open: ${e.message}", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
+                                                FileUtils.openFile(context, message.mediaLocalPath, message.mediaFileName)
                                             }
                                     )
                                     Column(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clickable {
-                                                if (message.mediaLocalPath != null) {
-                                                    try {
-                                                        val file = File(message.mediaLocalPath)
-                                                        if (file.exists()) {
-                                                            val uri = FileProvider.getUriForFile(
-                                                                context,
-                                                                "${context.packageName}.fileprovider",
-                                                                file
-                                                            )
-                                                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                                                setDataAndType(uri, "*/*")
-                                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                            }
-                                                            context.startActivity(Intent.createChooser(intent, "Open file with"))
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Cannot open: ${e.message}", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
+                                                FileUtils.openFile(context, message.mediaLocalPath, message.mediaFileName)
                                             }
                                     ) {
                                         Text(
@@ -1477,7 +1615,7 @@ fun MessageBubble(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "${(message.mediaFileSize / 1024).coerceAtLeast(1)} KB • Tap to open",
+                                            text = fileSubtitle,
                                             color = WhatsAppTime,
                                             style = MaterialTheme.typography.labelSmall
                                         )
@@ -1492,7 +1630,13 @@ fun MessageBubble(
                                                     if (srcFile.exists()) {
                                                         val destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                                                         if (!destDir.exists()) destDir.mkdirs()
-                                                        val destName = message.mediaFileName ?: srcFile.name
+                                                        var destName = message.mediaFileName ?: srcFile.name
+                                                        if (!destName.contains(".") && srcFile.name.contains(".")) {
+                                                            val ext = srcFile.extension
+                                                            if (ext.isNotBlank() && !ext.equals("bin", true)) {
+                                                                destName += ".$ext"
+                                                            }
+                                                        }
                                                         val destFile = File(destDir, destName)
                                                         srcFile.copyTo(destFile, overwrite = true)
                                                         MediaScannerConnection.scanFile(
@@ -1523,7 +1667,7 @@ fun MessageBubble(
                             }
                         }
 
-                        if (message.messageType == "TEXT" || (message.messageType != "PHOTO" && message.text != message.mediaFileName)) {
+                        if (message.messageType == "TEXT") {
                             Text(
                                 text = message.text,
                                 color = textColor,
@@ -1554,14 +1698,15 @@ fun MessageBubble(
 
         DropdownMenu(
             expanded = showMessageMenu,
-            onDismissRequest = { showMessageMenu = false }
+            onDismissRequest = { showMessageMenu = false },
+            modifier = Modifier.background(Color(0xFF202C33))
         ) {
             DropdownMenuItem(
-                text = { Text("Delete message") },
-                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                text = { Text("Delete message", color = Color(0xFFEF5350)) },
+                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF5350)) },
                 onClick = {
                     showMessageMenu = false
-                    onDelete()
+                    onDeleteClick()
                 }
             )
         }
@@ -1631,22 +1776,27 @@ fun StatusTick(status: DeliveryStatus, onRetry: (() -> Unit)? = null) {
 
 @Composable
 fun FullscreenPhotoDialog(
-    photoPath: String,
+    photoPath: String? = null,
+    bitmapInput: Bitmap? = null,
+    title: String? = null,
+    isViewOnce: Boolean = false,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val bitmap = remember(photoPath) {
-        try {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(photoPath, options)
-            var sample = 1
-            while (options.outWidth / sample > 2048 || options.outHeight / sample > 2048) {
-                sample *= 2
+    val bitmap = remember(photoPath, bitmapInput) {
+        bitmapInput ?: if (!photoPath.isNullOrBlank()) {
+            try {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(photoPath, options)
+                var sample = 1
+                while (options.outWidth / sample > 2048 || options.outHeight / sample > 2048) {
+                    sample *= 2
+                }
+                BitmapFactory.decodeFile(photoPath, BitmapFactory.Options().apply { inSampleSize = sample })
+            } catch (e: Throwable) {
+                null
             }
-            BitmapFactory.decodeFile(photoPath, BitmapFactory.Options().apply { inSampleSize = sample })
-        } catch (e: Throwable) {
-            null
-        }
+        } else null
     }
 
     var scale by remember { mutableStateOf(1f) }
@@ -1717,15 +1867,50 @@ fun FullscreenPhotoDialog(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
 
-                Button(
-                    onClick = {
-                        try {
-                            val srcFile = File(photoPath)
-                            if (srcFile.exists()) {
+                if (!title.isNullOrBlank()) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+                if (isViewOnce) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.Black.copy(alpha = 0.6f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            ViewOnceIcon(isOpened = false, modifier = Modifier.size(18.dp), tint = WhatsAppTypingGreen)
+                            Text("View once photo", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            try {
                                 val destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
                                 if (!destDir.exists()) destDir.mkdirs()
                                 val destFile = File(destDir, "PrivateTwo_${System.currentTimeMillis()}.jpg")
-                                srcFile.copyTo(destFile, overwrite = true)
+                                if (photoPath != null && File(photoPath).exists()) {
+                                    File(photoPath).copyTo(destFile, overwrite = true)
+                                } else if (bitmap != null) {
+                                    FileOutputStream(destFile).use { out ->
+                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                    }
+                                }
                                 MediaScannerConnection.scanFile(
                                     context,
                                     arrayOf(destFile.absolutePath),
@@ -1733,34 +1918,40 @@ fun FullscreenPhotoDialog(
                                     null
                                 )
                                 Toast.makeText(context, "Saved to Gallery / Pictures!", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppTypingGreen)
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF111B21), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Save to Gallery", color = Color(0xFF111B21), fontWeight = FontWeight.Bold)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = WhatsAppTypingGreen)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF111B21), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Save to Gallery", color = Color(0xFF111B21), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AudioPlayerBubble(
     filePath: String?,
     fileName: String,
     fileSize: Long,
-    isOutgoing: Boolean
+    isOutgoing: Boolean,
+    messageId: String,
+    audioSyncEvent: AudioSyncEvent? = null,
+    onSendSync: ((action: String, messageId: String?, fileName: String?, positionMs: Int) -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var isPlaying by remember { mutableStateOf(false) }
     var currentProgress by remember { mutableFloatStateOf(0f) }
     var durationMs by remember { mutableIntStateOf(0) }
     var currentPosMs by remember { mutableIntStateOf(0) }
+    var isSyncActive by remember { mutableStateOf(false) }
     val mediaPlayer = remember { android.media.MediaPlayer() }
 
     DisposableEffect(filePath) {
@@ -1786,11 +1977,85 @@ fun AudioPlayerBubble(
         }
     }
 
+    // Synchronize playback when partner plays/pauses this song
+    LaunchedEffect(audioSyncEvent) {
+        val event = audioSyncEvent ?: return@LaunchedEffect
+        val isTarget = (event.messageId?.isNotBlank() == true && event.messageId == messageId) ||
+                       (event.fileName?.isNotBlank() == true && (
+                           event.fileName.equals(fileName, ignoreCase = true) ||
+                           fileName.contains(event.fileName, ignoreCase = true) ||
+                           event.fileName.contains(fileName, ignoreCase = true)
+                       ))
+        if (!isTarget) return@LaunchedEffect
+
+        when (event.action) {
+            "PLAY" -> {
+                if (filePath.isNullOrBlank() || !File(filePath).exists()) {
+                    Toast.makeText(context, "Partner is playing: $fileName (Downloading song...)", Toast.LENGTH_SHORT).show()
+                    return@LaunchedEffect
+                }
+                try {
+                    if (!mediaPlayer.isPlaying) {
+                        mediaPlayer.reset()
+                        mediaPlayer.setDataSource(filePath)
+                        mediaPlayer.prepare()
+                        durationMs = mediaPlayer.duration
+                        if (event.positionMs > 0 && event.positionMs < durationMs) {
+                            mediaPlayer.seekTo(event.positionMs)
+                            currentPosMs = event.positionMs
+                        }
+                        mediaPlayer.setOnCompletionListener {
+                            isPlaying = false
+                            isSyncActive = false
+                            currentProgress = 0f
+                            currentPosMs = 0
+                        }
+                        mediaPlayer.start()
+                        isPlaying = true
+                        isSyncActive = true
+                    } else {
+                        // Keep aligned if drift > 2 seconds
+                        if (kotlin.math.abs(mediaPlayer.currentPosition - event.positionMs) > 2000) {
+                            mediaPlayer.seekTo(event.positionMs)
+                        }
+                        isSyncActive = true
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            "PAUSE" -> {
+                try {
+                    if (mediaPlayer.isPlaying) {
+                        mediaPlayer.pause()
+                    }
+                    isPlaying = false
+                    isSyncActive = false
+                } catch (_: Exception) {}
+            }
+            "STOP" -> {
+                try {
+                    if (mediaPlayer.isPlaying) {
+                        mediaPlayer.stop()
+                    }
+                    isPlaying = false
+                    isSyncActive = false
+                    currentProgress = 0f
+                    currentPosMs = 0
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = Color(0x22000000),
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = { onLongClick?.invoke() }
+            )
             .padding(bottom = 6.dp)
     ) {
         Row(
@@ -1814,6 +2079,8 @@ fun AudioPlayerBubble(
                         try {
                             mediaPlayer.pause()
                             isPlaying = false
+                            isSyncActive = false
+                            onSendSync?.invoke("PAUSE", messageId, fileName, mediaPlayer.currentPosition)
                         } catch (_: Exception) {}
                     } else {
                         try {
@@ -1821,13 +2088,20 @@ fun AudioPlayerBubble(
                             mediaPlayer.setDataSource(filePath)
                             mediaPlayer.prepare()
                             durationMs = mediaPlayer.duration
+                            if (currentPosMs > 0 && currentPosMs < durationMs) {
+                                mediaPlayer.seekTo(currentPosMs)
+                            }
                             mediaPlayer.setOnCompletionListener {
                                 isPlaying = false
+                                isSyncActive = false
                                 currentProgress = 0f
                                 currentPosMs = 0
+                                onSendSync?.invoke("STOP", messageId, fileName, 0)
                             }
                             mediaPlayer.start()
                             isPlaying = true
+                            isSyncActive = true
+                            onSendSync?.invoke("PLAY", messageId, fileName, mediaPlayer.currentPosition)
                         } catch (e: Exception) {
                             Toast.makeText(context, "Cannot play audio: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
@@ -1843,14 +2117,46 @@ fun AudioPlayerBubble(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = fileName,
-                    color = WhatsAppText,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = fileName,
+                        color = WhatsAppText,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isSyncActive || isPlaying) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = WhatsAppTypingGreen.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(start = 6.dp)
+                        ) {
+                            Text(
+                                text = "🎵 Sync",
+                                color = WhatsAppTypingGreen,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (isSyncActive || isPlaying) {
+                    Text(
+                        text = "🎵 Listening Together",
+                        color = WhatsAppTypingGreen,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     progress = { currentProgress },
@@ -1884,4 +2190,181 @@ private fun formatAudioTime(ms: Int): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+}
+
+/**
+ * WhatsApp-style circled '1' View Once badge.
+ */
+@Composable
+fun ViewOnceIcon(
+    isOpened: Boolean,
+    modifier: Modifier = Modifier,
+    tint: Color = if (isOpened) Color(0xFF8696A0) else Color(0xFF25D366)
+) {
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .border(
+                width = 1.8.dp,
+                color = tint,
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "1",
+            color = tint,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/**
+ * WhatsApp-style photo sending preview with View-Once toggle.
+ */
+@Composable
+fun PhotoSendPreviewDialog(
+    photoFile: File,
+    isViewOnce: Boolean,
+    onToggleViewOnce: () -> Unit,
+    onDismiss: () -> Unit,
+    onSend: () -> Unit
+) {
+    val bitmap = remember(photoFile) {
+        try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(photoFile.absolutePath, options)
+            var sample = 1
+            while (options.outWidth / sample > 1200 || options.outHeight / sample > 1200) {
+                sample *= 2
+            }
+            BitmapFactory.decodeFile(photoFile.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0B141A))
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.White)
+                }
+                Text(
+                    text = if (isViewOnce) "1-Time View Photo" else "Send Photo",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+                Spacer(modifier = Modifier.size(48.dp))
+            }
+
+            // Image Preview
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Preview",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 56.dp, bottom = 80.dp)
+                )
+            }
+
+            // Bottom controls: WhatsApp View-Once toggle pill & Send FAB
+            Surface(
+                color = Color(0xCC1F2C34),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (isViewOnce) Color(0xFF103629) else Color(0xFF2A3942),
+                        border = BorderStroke(1.dp, if (isViewOnce) Color(0xFF25D366) else Color.Transparent),
+                        modifier = Modifier
+                            .clickable { onToggleViewOnce() }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            ViewOnceIcon(isOpened = false, tint = if (isViewOnce) Color(0xFF25D366) else Color.White)
+                            Text(
+                                text = if (isViewOnce) "View Once: ON" else "View Once: OFF",
+                                color = if (isViewOnce) Color(0xFF25D366) else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    FloatingActionButton(
+                        onClick = onSend,
+                        containerColor = Color(0xFF25D366),
+                        contentColor = Color(0xFF111B21),
+                        shape = CircleShape,
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(24.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * WhatsApp-style "last seen today at 6:45 PM" formatter.
+ */
+fun formatLastSeen(timestamp: Long): String {
+    if (timestamp <= 0L) return "Offline"
+    val now = Calendar.getInstance()
+    val lastSeen = Calendar.getInstance().apply { timeInMillis = timestamp }
+
+    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val formattedTime = timeFormat.format(Date(timestamp))
+
+    val isToday = now.get(Calendar.YEAR) == lastSeen.get(Calendar.YEAR) &&
+            now.get(Calendar.DAY_OF_YEAR) == lastSeen.get(Calendar.DAY_OF_YEAR)
+
+    val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+    val isYesterday = yesterday.get(Calendar.YEAR) == lastSeen.get(Calendar.YEAR) &&
+            yesterday.get(Calendar.DAY_OF_YEAR) == lastSeen.get(Calendar.DAY_OF_YEAR)
+
+    return when {
+        isToday -> "last seen today at $formattedTime"
+        isYesterday -> "last seen yesterday at $formattedTime"
+        else -> {
+            val dateFormat = SimpleDateFormat("d MMM 'at' h:mm a", Locale.getDefault())
+            "last seen ${dateFormat.format(Date(timestamp))}"
+        }
+    }
 }

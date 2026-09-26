@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
@@ -294,6 +295,32 @@ fun AntiPeepShieldOverlay(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val requestBiometricUnlock: (() -> Unit) -> Unit = { onSuccess ->
+        var currentContext: Context? = context
+        var fragmentActivity: androidx.fragment.app.FragmentActivity? = null
+        while (currentContext != null) {
+            if (currentContext is androidx.fragment.app.FragmentActivity) {
+                fragmentActivity = currentContext
+                break
+            }
+            currentContext = (currentContext as? android.content.ContextWrapper)?.baseContext
+        }
+
+        if (fragmentActivity != null && org.privatetwo.app.core.security.BiometricAuthHelper.isBiometricAvailable(fragmentActivity)) {
+            org.privatetwo.app.core.security.BiometricAuthHelper.showBiometricPrompt(
+                activity = fragmentActivity,
+                title = "Unlock Private Screen",
+                subtitle = "Verify fingerprint, PIN, or pattern to reveal",
+                onSuccess = onSuccess,
+                onError = { /* Stay concealed on authentication failure or cancel */ }
+            )
+        } else {
+            onSuccess()
+        }
+    }
+
     Box(
         modifier = modifier.fillMaxSize()
     ) {
@@ -323,20 +350,22 @@ fun AntiPeepShieldOverlay(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.96f))
-                    .clickable { onDismissTilt() },
+                    .background(Color.Black.copy(alpha = 0.98f))
+                    .clickable {
+                        requestBiometricUnlock { onDismissTilt() }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.padding(32.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Security,
                         contentDescription = null,
-                        tint = Color(0xFF64B5F6),
-                        modifier = Modifier.size(48.dp)
+                        tint = Color(0xFF25D366),
+                        modifier = Modifier.size(52.dp)
                     )
                     Text(
                         text = "Side-Angle Guard Active",
@@ -345,11 +374,30 @@ fun AntiPeepShieldOverlay(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Hold phone straight to view.\nTap screen to dismiss.",
+                        text = "Phone tilted. Screen concealed for privacy.\nTap to verify fingerprint / lock & reveal.",
                         color = Color.LightGray,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center
                     )
+                    Button(
+                        onClick = {
+                            requestBiometricUnlock { onDismissTilt() }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF202C33),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Fingerprint,
+                            contentDescription = null,
+                            tint = Color(0xFF25D366),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Verify Lock to Reveal", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -366,7 +414,12 @@ fun AntiPeepShieldOverlay(
                     .background(Color.Black)
                     .pointerInput(Unit) {
                         detectTapGestures(
-                            onDoubleTap = { onDismissManualBlackout() }
+                            onTap = {
+                                requestBiometricUnlock { onDismissManualBlackout() }
+                            },
+                            onDoubleTap = {
+                                requestBiometricUnlock { onDismissManualBlackout() }
+                            }
                         )
                     },
                 contentAlignment = Alignment.Center
@@ -379,32 +432,35 @@ fun AntiPeepShieldOverlay(
                     Icon(
                         imageVector = Icons.Default.Lock,
                         contentDescription = "Concealed",
-                        tint = Color(0xFF444444),
-                        modifier = Modifier.size(44.dp)
+                        tint = Color(0xFF555555),
+                        modifier = Modifier.size(48.dp)
                     )
 
                     Text(
-                        text = "Screen Concealed",
-                        color = Color(0xFF666666),
-                        fontSize = 15.sp,
+                        text = "Screen Concealed & Locked",
+                        color = Color(0xFF888888),
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
 
                     Button(
-                        onClick = onDismissManualBlackout,
+                        onClick = {
+                            requestBiometricUnlock { onDismissManualBlackout() }
+                        },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF222222),
-                            contentColor = Color(0xFFCCCCCC)
+                            containerColor = Color(0xFF1E282E),
+                            contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(22.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Visibility,
+                            imageVector = Icons.Default.Fingerprint,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            tint = Color(0xFF25D366),
+                            modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Double-tap or Click to Reveal", fontSize = 13.sp)
+                        Text("Tap to Unlock with Lock", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

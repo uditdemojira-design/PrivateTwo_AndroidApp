@@ -38,6 +38,13 @@ import org.privatetwo.app.core.signaling.SignalingClient
 import org.privatetwo.app.core.signaling.SignalingConnectionState
 import java.io.File
 import java.util.Calendar
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import org.privatetwo.app.core.database.CallRecordEntity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +52,9 @@ fun MainScreen(
     secureStorage: SecureStorage,
     signalingClient: SignalingClient,
     partnerDisplayName: String? = null,
+    callRecords: List<CallRecordEntity> = emptyList(),
+    onClearCallHistory: () -> Unit = {},
+    onDeleteCallRecord: (String) -> Unit = {},
     onNameUpdated: (String) -> Unit = {},
     onOpenChat: () -> Unit,
     onStartAudioCall: () -> Unit,
@@ -55,6 +65,15 @@ fun MainScreen(
     val context = LocalContext.current
     val connectionState by signalingClient.connectionState.collectAsState()
     val peerDeviceId = remember { secureStorage.getPairedPeerDeviceId() ?: "Unknown Partner" }
+
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
+    var selectedCallForDetail by remember { mutableStateOf<CallRecordEntity?>(null) }
+    var showStartCallBottomSheet by remember { mutableStateOf(false) }
+
+    val missedCallCount = remember(callRecords) {
+        callRecords.count { it.isIncoming && (it.callStatus == "MISSED" || it.callStatus == "DECLINED") }
+    }
 
     var showUnpairDialog by remember { mutableStateOf(false) }
 
@@ -74,6 +93,7 @@ fun MainScreen(
                 secureStorage.profilePicturePath = savedPath
                 profilePicPath = savedPath
                 profilePicVersion++
+                onNameUpdated(myName ?: "")
                 Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
@@ -110,54 +130,148 @@ fun MainScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(36.dp)
+            Column {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Security,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Security,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = "PrivateTwo",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Zero-Trace 1-to-1 Channel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Column {
-                            Text(
-                                text = "PrivateTwo",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Zero-Trace 1-to-1 Channel",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    actions = {
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+
+                // WhatsApp-Style Tab Row (Chats & Calls)
+                TabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = Color(0xFF25D366),
+                    indicator = { tabPositions ->
+                        if (selectedTabIndex < tabPositions.size) {
+                            Box(
+                                Modifier
+                                    .tabIndicatorOffset(tabPositions[selectedTabIndex])
+                                    .height(3.dp)
+                                    .background(
+                                        Color(0xFF25D366),
+                                        RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)
+                                    )
                             )
                         }
                     }
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
+                ) {
+                    Tab(
+                        selected = selectedTabIndex == 0,
+                        onClick = { selectedTabIndex = 0 },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Chat,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    "Chats",
+                                    fontWeight = if (selectedTabIndex == 0) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        },
+                        selectedContentColor = Color(0xFF25D366),
+                        unselectedContentColor = Color(0xFF8696A0)
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Phone,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    "Calls",
+                                    fontWeight = if (selectedTabIndex == 1) FontWeight.Bold else FontWeight.Medium
+                                )
+                                if (missedCallCount > 0) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFF25D366),
+                                        modifier = Modifier.padding(start = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "$missedCallCount",
+                                            color = Color(0xFF111B21),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        selectedContentColor = Color(0xFF25D366),
+                        unselectedContentColor = Color(0xFF8696A0)
+                    )
+                }
+            }
+        },
+        floatingActionButton = {
+            if (selectedTabIndex == 1) {
+                FloatingActionButton(
+                    onClick = { showStartCallBottomSheet = true },
+                    containerColor = Color(0xFF25D366),
+                    contentColor = Color(0xFF111B21)
+                ) {
+                    Icon(Icons.Default.Phone, contentDescription = "Start New Call")
+                }
+            }
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
+        if (selectedTabIndex == 0) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
@@ -749,11 +863,345 @@ fun MainScreen(
             // Essential bottom padding for small screens to scroll freely past system navigation bar
             Spacer(modifier = Modifier.height(72.dp))
         }
+    } else {
+        CallHistoryContent(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+            callRecords = callRecords,
+            partnerName = currentPartnerName,
+            partnerPicPath = partnerPicPath,
+            profilePicVersion = profilePicVersion,
+            onStartAudioCall = onStartAudioCall,
+            onStartVideoCall = onStartVideoCall,
+            onClearHistory = { showClearHistoryDialog = true },
+            onCallClick = { call -> selectedCallForDetail = call }
+        )
+    }
 
-        if (showUnpairDialog) {
-            AlertDialog(
-                onDismissRequest = { showUnpairDialog = false },
-                title = { Text("Connect New Device?") },
+    if (showClearHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = { Text("Clear Call Log?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Do you want to clear your entire audio and video call history? This action cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearHistoryDialog = false
+                        onClearCallHistory()
+                        Toast.makeText(context, "Call history cleared", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Clear All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    selectedCallForDetail?.let { call ->
+        val isVideo = call.callType.equals("VIDEO", ignoreCase = true)
+        val isMissed = call.isIncoming && (call.callStatus == "MISSED" || call.callStatus == "DECLINED")
+
+        AlertDialog(
+            onDismissRequest = { selectedCallForDetail = null },
+            icon = {
+                Surface(
+                    shape = CircleShape,
+                    color = if (isMissed) Color(0xFFE53935).copy(alpha = 0.15f) else Color(0xFF25D366).copy(alpha = 0.15f),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (isVideo) Icons.Default.Videocam else Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = if (isMissed) Color(0xFFE53935) else Color(0xFF25D366),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+            },
+            title = {
+                Text(
+                    text = if (isVideo) "Video Call Info" else "Voice Call Info",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Contact info row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            val bmp = remember(partnerPicPath, profilePicVersion) {
+                                ProfileImageHelper.loadAvatarBitmap(partnerPicPath)
+                            }
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = currentPartnerName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (call.isIncoming) "Incoming Call" else "Outgoing Call",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // Date and Time
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Time:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = formatCallFullDateTime(call.timestamp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // Duration
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Duration:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val durationText = if (call.durationSeconds > 0) {
+                            formatCallDuration(call.durationSeconds)
+                        } else {
+                            "0s (Not Connected)"
+                        }
+                        Text(
+                            text = durationText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // Status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Status:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val statusDisplay = when {
+                            call.callStatus == "MISSED" -> "Missed Call"
+                            call.callStatus == "DECLINED" -> "Declined"
+                            call.callStatus == "UNANSWERED" -> "Unanswered"
+                            else -> "Completed"
+                        }
+                        Text(
+                            text = statusDisplay,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isMissed) Color(0xFFE53935) else Color(0xFF25D366)
+                        )
+                    }
+
+                    // Security notice
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "End-to-End Encrypted via WebRTC DTLS-SRTP",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedCallForDetail = null
+                        if (isVideo) onStartVideoCall() else onStartAudioCall()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+                ) {
+                    Icon(
+                        imageVector = if (isVideo) Icons.Default.Videocam else Icons.Default.Phone,
+                        contentDescription = null,
+                        tint = Color(0xFF111B21),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Call Again", color = Color(0xFF111B21), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            val callId = call.id
+                            selectedCallForDetail = null
+                            onDeleteCallRecord(callId)
+                            Toast.makeText(context, "Call entry deleted", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Text("Delete Log", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { selectedCallForDetail = null }) {
+                        Text("Close")
+                    }
+                }
+            }
+        )
+    }
+
+    if (showStartCallBottomSheet) {
+        AlertDialog(
+            onDismissRequest = { showStartCallBottomSheet = false },
+            icon = {
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF25D366).copy(alpha = 0.15f),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = Color(0xFF25D366),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            },
+            title = {
+                Text(
+                    text = "Call $currentPartnerName",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = "Start a 1-to-1 secure encrypted peer-to-peer call.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            showStartCallBottomSheet = false
+                            onStartAudioCall()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = Color(0xFF111B21),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Voice", color = Color(0xFF111B21), fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            showStartCallBottomSheet = false
+                            onStartVideoCall()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Videocam,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Video", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showStartCallBottomSheet = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showUnpairDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnpairDialog = false },
+            title = { Text("Connect New Device?") },
                 text = {
                     Text(
                         "PrivateTwo strictly enforces a 1-to-1 device policy. To pair with another device or re-enter the initial pairing phase, the current pairing session will be reset."
@@ -985,3 +1433,418 @@ fun QuickActionCard(
         }
     }
 }
+
+@Composable
+fun CallHistoryContent(
+    modifier: Modifier = Modifier,
+    callRecords: List<CallRecordEntity>,
+    partnerName: String,
+    partnerPicPath: String?,
+    profilePicVersion: Int,
+    onStartAudioCall: () -> Unit,
+    onStartVideoCall: () -> Unit,
+    onClearHistory: () -> Unit,
+    onCallClick: (CallRecordEntity) -> Unit
+) {
+    if (callRecords.isEmpty()) {
+        Column(
+            modifier = modifier
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Spacer(modifier = Modifier.height(48.dp))
+            Surface(
+                shape = CircleShape,
+                color = Color(0xFF25D366).copy(alpha = 0.12f),
+                modifier = Modifier.size(90.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.PhoneCallback,
+                        contentDescription = null,
+                        tint = Color(0xFF25D366),
+                        modifier = Modifier.size(46.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "No call history yet",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Voice and video calls made directly to your partner will appear here with zero logs on the server.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(modifier = Modifier.height(28.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Button(
+                    onClick = onStartAudioCall,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Phone,
+                        contentDescription = null,
+                        tint = Color(0xFF111B21),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Voice Call",
+                        color = Color(0xFF111B21),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                OutlinedButton(
+                    onClick = onStartVideoCall,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Videocam,
+                        contentDescription = null,
+                        tint = Color(0xFF25D366),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Video Call",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 12.dp)
+        ) {
+            // Quick Call Header Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(46.dp)
+                            ) {
+                                val bmp = remember(partnerPicPath, profilePicVersion) {
+                                    ProfileImageHelper.loadAvatarBitmap(partnerPicPath)
+                                }
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = partnerName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Direct Encrypted Line",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF25D366)
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalIconButton(
+                                onClick = onStartAudioCall,
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = Color(0xFF25D366).copy(alpha = 0.15f),
+                                    contentColor = Color(0xFF25D366)
+                                )
+                            ) {
+                                Icon(Icons.Default.Phone, contentDescription = "Voice Call")
+                            }
+                            FilledTonalIconButton(
+                                onClick = onStartVideoCall,
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = Color(0xFF25D366).copy(alpha = 0.15f),
+                                    contentColor = Color(0xFF25D366)
+                                )
+                            ) {
+                                Icon(Icons.Default.Videocam, contentDescription = "Video Call")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section Label "Recent" with Clear History action
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Recent",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = onClearHistory) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Clear Call Log",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Clear Log",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+            // Call Records Items
+            items(callRecords, key = { it.id }) { call ->
+                CallHistoryItem(
+                    call = call,
+                    partnerName = partnerName,
+                    partnerPicPath = partnerPicPath,
+                    profilePicVersion = profilePicVersion,
+                    onClick = { onCallClick(call) },
+                    onCallBack = {
+                        if (call.callType.equals("VIDEO", ignoreCase = true)) {
+                            onStartVideoCall()
+                        } else {
+                            onStartAudioCall()
+                        }
+                    }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 76.dp, end = 16.dp),
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(80.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun CallHistoryItem(
+    call: CallRecordEntity,
+    partnerName: String,
+    partnerPicPath: String?,
+    profilePicVersion: Int,
+    onClick: () -> Unit,
+    onCallBack: () -> Unit
+) {
+    val isMissed = call.isIncoming && (call.callStatus == "MISSED" || call.callStatus == "DECLINED")
+    val isVideo = call.callType.equals("VIDEO", ignoreCase = true)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            // Avatar
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(50.dp)
+            ) {
+                val bmp = remember(partnerPicPath, profilePicVersion) {
+                    ProfileImageHelper.loadAvatarBitmap(partnerPicPath)
+                }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                // Name (Red if missed call, WhatsApp style!)
+                Text(
+                    text = partnerName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isMissed) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Direction Icon + Details
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // WhatsApp style call direction arrow
+                    when {
+                        isMissed -> {
+                            Icon(
+                                Icons.Default.CallMissed,
+                                contentDescription = "Missed Call",
+                                tint = Color(0xFFE53935),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        call.isIncoming -> {
+                            Icon(
+                                Icons.Default.CallReceived,
+                                contentDescription = "Incoming Call",
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                Icons.Default.CallMade,
+                                contentDescription = "Outgoing Call",
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    val dateStr = remember(call.timestamp) { formatCallTimestamp(call.timestamp) }
+                    val durationStr = remember(call.durationSeconds) { formatCallDuration(call.durationSeconds) }
+                    val statusText = when {
+                        isMissed -> "Missed"
+                        call.callStatus == "UNANSWERED" -> "Unanswered"
+                        durationStr.isNotBlank() -> durationStr
+                        else -> "Connected"
+                    }
+
+                    Text(
+                        text = "$dateStr • $statusText",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // WhatsApp-style quick callback action icon on right
+        IconButton(
+            onClick = onCallBack,
+            modifier = Modifier.size(44.dp)
+        ) {
+            Icon(
+                imageVector = if (isVideo) Icons.Default.Videocam else Icons.Default.Phone,
+                contentDescription = if (isVideo) "Video Call" else "Voice Call",
+                tint = Color(0xFF25D366),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+fun formatCallTimestamp(timestamp: Long): String {
+    val now = Calendar.getInstance()
+    val callCalendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val formattedTime = timeFormat.format(Date(timestamp))
+
+    return when {
+        now.get(Calendar.YEAR) == callCalendar.get(Calendar.YEAR) &&
+        now.get(Calendar.DAY_OF_YEAR) == callCalendar.get(Calendar.DAY_OF_YEAR) -> {
+            "Today, $formattedTime"
+        }
+        now.get(Calendar.YEAR) == callCalendar.get(Calendar.YEAR) &&
+        now.get(Calendar.DAY_OF_YEAR) - callCalendar.get(Calendar.DAY_OF_YEAR) == 1 -> {
+            "Yesterday, $formattedTime"
+        }
+        else -> {
+            val dateFormat = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault())
+            dateFormat.format(Date(timestamp))
+        }
+    }
+}
+
+fun formatCallDuration(seconds: Long): String {
+    if (seconds <= 0) return ""
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m ${secs}s"
+        else -> "${secs}s"
+    }
+}
+
+fun formatCallFullDateTime(timestamp: Long): String {
+    val sdf = SimpleDateFormat("EEEE, d MMMM yyyy 'at' h:mm:ss a", Locale.getDefault())
+    return sdf.format(Date(timestamp))
+}
+

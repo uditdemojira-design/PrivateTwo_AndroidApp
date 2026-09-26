@@ -36,14 +36,19 @@ import org.privatetwo.app.feature.home.MainScreen
 import org.privatetwo.app.feature.pairing.PairingScreen
 import org.privatetwo.app.feature.pairing.PairingViewModel
 import org.privatetwo.app.feature.settings.PrivacySettingsScreen
+import kotlinx.coroutines.delay
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.privatetwo.app.core.signaling.SignalingConnectionState
+import org.privatetwo.app.core.updater.AppUpdateManager
+import org.privatetwo.app.core.updater.UpdateInfo
+import android.widget.Toast
+import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
 
@@ -73,7 +78,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private val callViewModel: CallViewModel by viewModels {
-        CallViewModel.Factory(app.webRtcSessionManager)
+        CallViewModel.Factory(app.webRtcSessionManager, app.database.callRecordDao())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,6 +117,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (app.secureStorage.isPaired()) {
+            SignalingKeepAliveService.start(this)
+        }
         // Auto-reconnect signaling immediately if disconnected when app returns to foreground
         if (app.signalingClient.connectionState.value == SignalingConnectionState.DISCONNECTED) {
             app.signalingClient.resetReconnectBackoff()
@@ -122,8 +130,8 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra("navigate_to")?.let {
-            pendingNavRoute.value = it
+        intent.getStringExtra("navigate_to")?.let { target ->
+            pendingNavRoute.value = target
         }
     }
 
@@ -148,6 +156,110 @@ class MainActivity : FragmentActivity() {
                     val navController = rememberNavController()
                     val isPaired = remember { app.secureStorage.isPaired() }
                     val startDestination = if (isPaired) "main" else "pairing"
+
+                    // Automatic In-App OTA Update Checker
+                    var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+                    var isDownloadingUpdate by remember { mutableStateOf(false) }
+                    var updateDownloadProgress by remember { mutableFloatStateOf(0f) }
+                    val coroutineScope = rememberCoroutineScope()
+
+                    LaunchedEffect(Unit) {
+                        try {
+                            val update = AppUpdateManager.checkForUpdate(BuildConfig.VERSION_CODE)
+                            if (update != null) {
+                                availableUpdate = update
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    if (availableUpdate != null) {
+                        val update = availableUpdate!!
+                        AlertDialog(
+                            onDismissRequest = {
+                                if (!isDownloadingUpdate) availableUpdate = null
+                            },
+                            containerColor = Color(0xFF202C33),
+                            titleContentColor = Color.White,
+                            textContentColor = Color(0xFFD1D7DB),
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Update",
+                                    tint = Color(0xFF25D366),
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = {
+                                Text(
+                                    text = "New Update Available! (${update.versionName})",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color.White
+                                )
+                            },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(
+                                        text = update.releaseNotes,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color(0xFFD1D7DB)
+                                    )
+                                    if (isDownloadingUpdate) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Downloading update: ${(updateDownloadProgress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color(0xFF25D366),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        LinearProgressIndicator(
+                                            progress = { updateDownloadProgress },
+                                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                                            color = Color(0xFF25D366),
+                                            trackColor = Color(0x44FFFFFF)
+                                        )
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        if (!isDownloadingUpdate) {
+                                            isDownloadingUpdate = true
+                                            coroutineScope.launch {
+                                                AppUpdateManager.downloadAndInstallApk(
+                                                    context = this@MainActivity,
+                                                    downloadUrl = update.downloadUrl,
+                                                    onProgress = { progress ->
+                                                        updateDownloadProgress = progress
+                                                    },
+                                                    onError = { errorMsg ->
+                                                        isDownloadingUpdate = false
+                                                        Toast.makeText(this@MainActivity, errorMsg, Toast.LENGTH_LONG).show()
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    },
+                                    enabled = !isDownloadingUpdate,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+                                ) {
+                                    Text(
+                                        text = if (isDownloadingUpdate) "Downloading..." else "Update Now",
+                                        color = Color(0xFF111B21),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            },
+                            dismissButton = {
+                                if (!isDownloadingUpdate) {
+                                    TextButton(onClick = { availableUpdate = null }) {
+                                        Text("Later", color = Color(0xFF8696A0))
+                                    }
+                                }
+                            }
+                        )
+                    }
 
                     // One-time Name Setup Prompt at the root level (shown once on initial entry if name doesn't exist)
                     var showNamePromptDialog by remember {
@@ -226,26 +338,31 @@ class MainActivity : FragmentActivity() {
 
                     val navRoute by pendingNavRoute
                     LaunchedEffect(navRoute) {
-                        navRoute?.let { target ->
-                            if (isPaired) {
-                                if (target == "chat" && app.secureStorage.isChatLockEnabled) {
-                                    BiometricAuthHelper.showBiometricPrompt(
-                                        activity = this@MainActivity,
-                                        title = "Unlock Private Chat",
-                                        subtitle = "Verify fingerprint or phone password to open chat",
-                                        onSuccess = {
-                                            navController.navigate(target) {
-                                                launchSingleTop = true
-                                            }
-                                        },
-                                        onError = {}
-                                    )
-                                } else {
-                                    navController.navigate(target) {
-                                        launchSingleTop = true
+                        val target = navRoute ?: return@LaunchedEffect
+                        delay(120) // Ensure NavController and NavHost have completed initial setup
+                        if (isPaired) {
+                            if (target == "chat" && app.secureStorage.isChatLockEnabled) {
+                                BiometricAuthHelper.showBiometricPrompt(
+                                    activity = this@MainActivity,
+                                    title = "Unlock Private Chat",
+                                    subtitle = "Verify fingerprint or phone password to open chat",
+                                    onSuccess = {
+                                        navController.navigate(target) {
+                                            launchSingleTop = true
+                                        }
+                                        pendingNavRoute.value = null
+                                    },
+                                    onError = {
+                                        pendingNavRoute.value = null
                                     }
+                                )
+                            } else {
+                                navController.navigate(target) {
+                                    launchSingleTop = true
                                 }
+                                pendingNavRoute.value = null
                             }
+                        } else {
                             pendingNavRoute.value = null
                         }
                     }
@@ -288,6 +405,7 @@ class MainActivity : FragmentActivity() {
                         composable("pairing") {
                             PairingScreen(
                                 viewModel = pairingViewModel,
+                                secureStorage = app.secureStorage,
                                 onPairingCompleted = {
                                     SignalingKeepAliveService.start(this@MainActivity)
                                     navController.navigate("main") {
@@ -299,10 +417,14 @@ class MainActivity : FragmentActivity() {
                         }
 
                         composable("main") {
+                            val callRecords by callViewModel.callRecords.collectAsState()
                             MainScreen(
                                 secureStorage = app.secureStorage,
                                 signalingClient = app.signalingClient,
                                 partnerDisplayName = livePartnerName,
+                                callRecords = callRecords,
+                                onClearCallHistory = { callViewModel.clearCallHistory() },
+                                onDeleteCallRecord = { id -> callViewModel.deleteCallRecord(id) },
                                 onNameUpdated = {
                                     chatViewModel.sendNameExchange()
                                 },

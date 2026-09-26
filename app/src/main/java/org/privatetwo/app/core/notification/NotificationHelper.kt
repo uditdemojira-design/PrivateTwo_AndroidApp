@@ -26,8 +26,8 @@ object NotificationHelper {
         messageText: String? = null,
         messageType: String = "TEXT"
     ) {
-        // If user is currently looking at the chat screen, do not buzz them with a notification
-        if (isChatVisible.get()) {
+        // If user is currently looking at the chat screen while the app is in the foreground, do not buzz
+        if (isChatVisible.get() && PrivateTwoApp.isAppInForeground) {
             return
         }
 
@@ -48,18 +48,20 @@ object NotificationHelper {
             body = when (messageType.uppercase()) {
                 "PHOTO" -> "📷 Photo"
                 "FILE" -> "📎 Document"
+                "CARD" -> "💌 Partner Card"
                 else -> messageText?.ifBlank { "New message" } ?: "New message"
             }
         }
 
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            action = "org.privatetwo.app.action.OPEN_CHAT"
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("navigate_to", "chat")
         }
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            101,
+            (System.currentTimeMillis() % 100000).toInt(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

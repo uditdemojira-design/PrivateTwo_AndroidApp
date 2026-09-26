@@ -1,0 +1,6 @@
+{
+  "versionCode": 4,
+  "versionName": "1.3.0",
+  "downloadUrl": "https://github.com/uditdemojira-design/PrivateTwo_AndroidApp/raw/main/release_artifacts/PrivateTwo-release.apk",
+  "releaseNotes": "• WhatsApp-style Contact Info: Shows only partner's profile with read-only name\n• Full-Screen Avatar View: Tap avatar in top bar or profile sheet to view large photo with zoom\n• WhatsApp View-Once Photos: Send 1-time view photos that auto-delete immediately after viewing\n• Online / Offline with Last Seen timestamp (e.g., 'last seen today at 6:45 PM')\n• Universal Deletion: Delete cards, audio songs, and file attachments for everyone\n• Anti-Peep Tilt Shield Lock: 65° tilt latches black shield requiring Biometric/PIN to unlock\n• WhatsApp-style Audio & Video Call History"
+}

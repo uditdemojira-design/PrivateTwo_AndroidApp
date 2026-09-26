@@ -1,10 +1,13 @@
 package org.privatetwo.app
 
 import android.app.Application
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
+import org.privatetwo.app.core.notification.NotificationHelper
 import org.privatetwo.app.core.database.PrivateTwoDatabase
 import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingClient
@@ -59,6 +62,29 @@ class PrivateTwoApp : Application() {
         }
 
         createNotificationChannels()
+
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var resumedCount = 0
+
+            override fun onActivityResumed(activity: Activity) {
+                resumedCount++
+                isAppInForeground = true
+            }
+
+            override fun onActivityPaused(activity: Activity) {
+                resumedCount--
+                if (resumedCount <= 0) {
+                    isAppInForeground = false
+                    NotificationHelper.isChatVisible.set(false)
+                }
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
 
         // Auto-connect to signaling server immediately on app launch
         signalingClient.connect()
@@ -115,5 +141,9 @@ class PrivateTwoApp : Application() {
         const val CHANNEL_MESSAGES_ID = "privatetwo_messages"
         const val CHANNEL_CALLS_ID = "privatetwo_calls"
         const val CHANNEL_SERVICE_ID = "privatetwo_service"
+
+        @Volatile
+        var isAppInForeground: Boolean = false
+            private set
     }
 }

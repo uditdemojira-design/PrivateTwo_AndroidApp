@@ -1,6 +1,12 @@
 package org.privatetwo.app.feature.pairing
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -8,8 +14,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -19,6 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -26,12 +38,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.privatetwo.app.core.security.SecureStorage
 import org.privatetwo.app.core.signaling.SignalingConnectionState
+import org.privatetwo.app.core.util.ProfileImageHelper
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PairingScreen(
     viewModel: PairingViewModel,
+    secureStorage: SecureStorage? = null,
     onPairingCompleted: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -61,6 +77,7 @@ fun PairingScreen(
                         inputCode = inputCode,
                         connectionState = connectionState,
                         serverUrl = viewModel.getSignalingUrl(),
+                        secureStorage = secureStorage,
                         onUpdateServerUrl = { viewModel.updateSignalingUrl(it) },
                         onReconnect = { viewModel.reconnectSignaling() },
                         onInputCodeChange = { if (it.length <= 6) inputCode = it },
@@ -274,12 +291,47 @@ fun UnpairedView(
     inputCode: String,
     connectionState: SignalingConnectionState,
     serverUrl: String,
+    secureStorage: SecureStorage? = null,
     onUpdateServerUrl: (String) -> Unit,
     onReconnect: () -> Unit = {},
     onInputCodeChange: (String) -> Unit,
     onGenerateClick: () -> Unit,
     onEnterClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    var myName by remember { mutableStateOf(secureStorage?.getMyDisplayName()) }
+    var showNameEditDialog by remember { mutableStateOf(false) }
+    var tempNameInput by remember(myName) { mutableStateOf(myName ?: "") }
+
+    var profilePicPath by remember { mutableStateOf(secureStorage?.profilePicturePath) }
+    var profilePicVersion by remember { mutableIntStateOf(0) }
+    val profileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val savedPath = ProfileImageHelper.saveAndOptimizeAvatar(context, it)
+            if (savedPath != null) {
+                secureStorage?.profilePicturePath = savedPath
+                profilePicPath = savedPath
+                profilePicVersion++
+                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Could not load image. Please select another.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Time-based Personalized Greeting Banner (Always active, connected or not)
+    val greeting = remember(myName) {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val displayName = if (!myName.isNullOrBlank()) myName!!.trim() else "User"
+        when (hour) {
+            in 4..11 -> "Good Morning, $displayName ☀️"
+            in 12..16 -> "Good Afternoon, $displayName 🌤️"
+            else -> "Good Evening, $displayName 🌙"
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -288,6 +340,199 @@ fun UnpairedView(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 1. Time-based Greeting Banner
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = when {
+                                greeting.contains("Morning") -> "☀️"
+                                greeting.contains("Afternoon") -> "🌤️"
+                                else -> "🌙"
+                            },
+                            fontSize = 22.sp
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = greeting,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Zero-trace private communication",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // 2. User Profile Setup Card (Edit photo & name anytime)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Profile Avatar with Camera badge
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clickable { profileLauncher.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        val bitmap = remember(profilePicPath, profilePicVersion) {
+                            ProfileImageHelper.loadAvatarBitmap(profilePicPath)
+                        }
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Profile Picture",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Person,
+                                    contentDescription = "Upload Profile Photo",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Camera badge overlay
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .align(Alignment.BottomEnd)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.CameraAlt,
+                                contentDescription = "Change Photo",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "MY PROFILE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = if (!myName.isNullOrBlank()) myName!! else "Tap to set name",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Set photo & name anytime • Visible to partner",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                IconButton(onClick = {
+                    tempNameInput = myName ?: ""
+                    showNameEditDialog = true
+                }) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Edit My Name",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        if (showNameEditDialog) {
+            AlertDialog(
+                onDismissRequest = { showNameEditDialog = false },
+                title = { Text("Set Your Display Name") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Your partner will see this name on their screen.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = tempNameInput,
+                            onValueChange = { tempNameInput = it },
+                            label = { Text("Display Name") },
+                            placeholder = { Text("e.g. Alex, Sam") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val trimmed = tempNameInput.trim()
+                        if (trimmed.isNotBlank()) {
+                            secureStorage?.setMyDisplayName(trimmed)
+                            myName = trimmed
+                            Toast.makeText(context, "Display name saved", Toast.LENGTH_SHORT).show()
+                        }
+                        showNameEditDialog = false
+                    }) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNameEditDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
         SignalingStatusCard(
             connectionState = connectionState,
             serverUrl = serverUrl,
