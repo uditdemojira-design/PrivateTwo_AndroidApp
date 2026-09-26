@@ -1,6 +1,6 @@
 {
-  "versionCode": 5,
-  "versionName": "1.4.0",
+  "versionCode": 6,
+  "versionName": "1.4.1",
   "downloadUrl": "https://github.com/uditdemojira-design/PrivateTwo_AndroidApp/raw/main/release_artifacts/PrivateTwo-release.apk",
-  "releaseNotes": "• True Partner Last Seen: Displays actual partner disconnect timestamp (not your own phone time)\n• Compact Header Last Seen: Fits cleanly in top bar without clipping (e.g. 'today at 8:12 PM')\n• Crystal Sharp HD Avatars: 1024px Full HD ARGB_8888 profile picture quality (no blurriness)\n• Profile Back Navigation: Back button in full-screen avatar returns to Contact Info\n• Responsive Anti-Peep Shield: Natural 42° tilt threshold for fast, effortless protection"
+  "releaseNotes": "• Fixed infinite Package Installer loop: Cleaned up stale APK from cache\n• True Partner Last Seen: Displays actual partner disconnect timestamp (not your own phone time)\n• Compact Header Last Seen: Fits cleanly in top bar without clipping (e.g. 'today at 8:12 PM')\n• Crystal Sharp HD Avatars: 1024px Full HD ARGB_8888 profile picture quality (no blurriness)\n• Profile Back Navigation: Back button in full-screen avatar returns to Contact Info\n• Responsive Anti-Peep Shield: Natural 42° tilt threshold for fast, effortless protection"
 }

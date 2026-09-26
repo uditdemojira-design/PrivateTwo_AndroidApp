@@ -49,6 +49,7 @@ import org.privatetwo.app.core.updater.AppUpdateManager
 import org.privatetwo.app.core.updater.UpdateInfo
 import android.widget.Toast
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : FragmentActivity() {
 
@@ -84,6 +85,22 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Clean up any previously installed update.apk so Package Installer never loops
+        try {
+            val updateFile = File(cacheDir, "update.apk")
+            if (updateFile.exists()) {
+                val pkgInfo = packageManager.getPackageArchiveInfo(updateFile.absolutePath, 0)
+                val apkCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    pkgInfo?.longVersionCode?.toInt() ?: 0
+                } else {
+                    pkgInfo?.versionCode ?: 0
+                }
+                if (apkCode <= BuildConfig.VERSION_CODE) {
+                    updateFile.delete()
+                }
+            }
+        } catch (_: Exception) {}
+
         updateFlagSecure(app.secureStorage.isFlagSecureEnabled)
 
         val startupPermissions = mutableListOf(
@@ -117,11 +134,6 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (packageManager.canRequestPackageInstalls()) {
-                AppUpdateManager.launchInstallerIfReady(this)
-            }
-        }
         if (app.secureStorage.isPaired()) {
             SignalingKeepAliveService.start(this)
         }
@@ -231,6 +243,8 @@ class MainActivity : FragmentActivity() {
                                     onClick = {
                                         if (updateDownloadProgress >= 1f) {
                                             AppUpdateManager.launchInstallerIfReady(this@MainActivity)
+                                            availableUpdate = null
+                                            isDownloadingUpdate = false
                                         } else if (!isDownloadingUpdate) {
                                             isDownloadingUpdate = true
                                             coroutineScope.launch {
