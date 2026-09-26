@@ -28,17 +28,17 @@ object ProfileImageHelper {
             val origHeight = boundsOptions.outHeight
             if (origWidth <= 0 || origHeight <= 0) return null
 
-            // Target size for profile avatars (512x512 is high-res yet tiny in memory)
-            val targetSize = 512
+            // Target size for profile avatars (1024x1024 crystal clear full HD)
+            val targetSize = 1024
             var sampleSize = 1
             while ((origWidth / (sampleSize * 2)) >= targetSize && (origHeight / (sampleSize * 2)) >= targetSize) {
                 sampleSize *= 2
             }
 
-            // 2. Decode sampled bitmap into RGB_565 (2 bytes per pixel instead of 4)
+            // 2. Decode sampled bitmap into ARGB_8888 for maximum sharpness
             val decodeOptions = BitmapFactory.Options().apply {
                 inSampleSize = sampleSize
-                inPreferredConfig = Bitmap.Config.RGB_565
+                inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             val sampledBitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, decodeOptions)
@@ -82,10 +82,10 @@ object ProfileImageHelper {
                 squareBitmap
             }
 
-            // 6. Save with timestamped filename
+            // 6. Save with timestamped filename (high quality JPEG 92%)
             val destFile = File(context.filesDir, "profile_avatar_${System.currentTimeMillis()}.jpg")
             FileOutputStream(destFile).use { out ->
-                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
             }
 
             // Clean up any older avatars
@@ -124,7 +124,7 @@ object ProfileImageHelper {
         if (!file.exists() || !file.canRead()) return null
         return try {
             val original = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-            val targetSize = 256
+            val targetSize = 1024
             val scaled = if (original.width > targetSize || original.height > targetSize) {
                 val minDim = minOf(original.width, original.height)
                 val x = (original.width - minDim) / 2
@@ -135,7 +135,7 @@ object ProfileImageHelper {
                 original
             }
             val baos = java.io.ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 75, baos)
+            scaled.compress(Bitmap.CompressFormat.JPEG, 88, baos)
             baos.toByteArray()
         } catch (t: Throwable) {
             t.printStackTrace()

@@ -174,6 +174,7 @@ fun ChatScreen(
 
     var fullScreenPhotoPath by remember { mutableStateOf<String?>(null) }
     var showFullscreenPartnerAvatar by remember { mutableStateOf(false) }
+    var openedAvatarFromProfileDialog by remember { mutableStateOf(false) }
 
     // Partner Info (Synced via E2EE exchange)
     val livePartnerAvatarPath by viewModel.partnerAvatarPath.collectAsState()
@@ -235,6 +236,7 @@ fun ChatScreen(
                                     .clip(CircleShape)
                                     .clickable {
                                         if (partnerAvatarBitmap != null || !effectivePartnerPhoto.isNullOrBlank()) {
+                                            openedAvatarFromProfileDialog = false
                                             showFullscreenPartnerAvatar = true
                                         } else {
                                             showContactProfileDialog = true
@@ -262,9 +264,10 @@ fun ChatScreen(
 
                             Column(
                                 modifier = Modifier
+                                    .weight(1f)
                                     .clip(RoundedCornerShape(6.dp))
                                     .clickable { showContactProfileDialog = true }
-                                    .padding(vertical = 2.dp, horizontal = 4.dp)
+                                    .padding(vertical = 2.dp, horizontal = 2.dp)
                             ) {
                                 Text(
                                     text = effectivePartnerName,
@@ -292,22 +295,24 @@ fun ChatScreen(
                                         signalingState == SignalingConnectionState.CONNECTING -> Pair(Color(0xFFF57F17), "Connecting…")
                                         signalingState == SignalingConnectionState.DISCONNECTED -> Pair(Color.Gray, "Waiting for network…")
                                         isPeerOnline -> Pair(WhatsAppTypingGreen, "Online")
-                                        else -> Pair(Color(0xFF8696A0), formatLastSeen(peerLastSeenTimestamp))
+                                        else -> Pair(Color(0xFF8696A0), formatLastSeen(peerLastSeenTimestamp, isCompact = true))
                                     }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         Surface(
                                             shape = CircleShape,
                                             color = dotColor,
-                                            modifier = Modifier.size(7.dp)
+                                            modifier = Modifier.size(6.dp)
                                         ) {}
                                         Text(
                                             text = statusText,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = if (isPeerOnline) WhatsAppTypingGreen else WhatsAppTime,
-                                            fontWeight = if (isPeerOnline) FontWeight.SemiBold else FontWeight.Normal
+                                            fontWeight = if (isPeerOnline) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -316,25 +321,38 @@ fun ChatScreen(
                     },
                     actions = {
                         // 1-Tap Black Screen Shield Toggle
-                        IconButton(onClick = {
-                            val next = !isLouverFilterActive
-                            isLouverFilterActive = next
-                            secureStorage?.isAntiPeepLouverEnabled = next
-                        }) {
+                        IconButton(
+                            onClick = {
+                                val next = !isLouverFilterActive
+                                isLouverFilterActive = next
+                                secureStorage?.isAntiPeepLouverEnabled = next
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = "Anti-Peep Privacy Shield",
-                                tint = if (isLouverFilterActive || isReadingCurtainActive || isStealthMaskActive) WhatsAppTypingGreen else Color.White
+                                tint = if (isLouverFilterActive || isReadingCurtainActive || isStealthMaskActive) WhatsAppTypingGreen else Color.White,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        IconButton(onClick = onStartAudioCall) {
-                            Icon(Icons.Default.Phone, contentDescription = "Audio Call", tint = Color.White)
+                        IconButton(
+                            onClick = onStartAudioCall,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Phone, contentDescription = "Audio Call", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = onStartVideoCall) {
-                            Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = Color.White)
+                        IconButton(
+                            onClick = onStartVideoCall,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { showMenu = !showMenu }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
+                        IconButton(
+                            onClick = { showMenu = !showMenu },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         DropdownMenu(
                             expanded = showMenu,
@@ -958,7 +976,13 @@ fun ChatScreen(
                 bitmapInput = partnerAvatarBitmap,
                 title = effectivePartnerName,
                 isViewOnce = false,
-                onDismiss = { showFullscreenPartnerAvatar = false }
+                onDismiss = {
+                    showFullscreenPartnerAvatar = false
+                    if (openedAvatarFromProfileDialog) {
+                        openedAvatarFromProfileDialog = false
+                        showContactProfileDialog = true
+                    }
+                }
             )
         }
 
@@ -1019,6 +1043,7 @@ fun ChatScreen(
                                     .clip(CircleShape)
                                     .clickable {
                                         if (partnerAvatarBitmap != null || !effectivePartnerPhoto.isNullOrBlank()) {
+                                            openedAvatarFromProfileDialog = true
                                             showContactProfileDialog = false
                                             showFullscreenPartnerAvatar = true
                                         } else {
@@ -2344,7 +2369,7 @@ fun PhotoSendPreviewDialog(
 /**
  * WhatsApp-style "last seen today at 6:45 PM" formatter.
  */
-fun formatLastSeen(timestamp: Long): String {
+fun formatLastSeen(timestamp: Long, isCompact: Boolean = false): String {
     if (timestamp <= 0L) return "Offline"
     val now = Calendar.getInstance()
     val lastSeen = Calendar.getInstance().apply { timeInMillis = timestamp }
@@ -2359,12 +2384,23 @@ fun formatLastSeen(timestamp: Long): String {
     val isYesterday = yesterday.get(Calendar.YEAR) == lastSeen.get(Calendar.YEAR) &&
             yesterday.get(Calendar.DAY_OF_YEAR) == lastSeen.get(Calendar.DAY_OF_YEAR)
 
-    return when {
-        isToday -> "last seen today at $formattedTime"
-        isYesterday -> "last seen yesterday at $formattedTime"
-        else -> {
-            val dateFormat = SimpleDateFormat("d MMM 'at' h:mm a", Locale.getDefault())
-            "last seen ${dateFormat.format(Date(timestamp))}"
+    return if (isCompact) {
+        when {
+            isToday -> "today at $formattedTime"
+            isYesterday -> "yesterday at $formattedTime"
+            else -> {
+                val dateFormat = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault())
+                dateFormat.format(Date(timestamp))
+            }
+        }
+    } else {
+        when {
+            isToday -> "last seen today at $formattedTime"
+            isYesterday -> "last seen yesterday at $formattedTime"
+            else -> {
+                val dateFormat = SimpleDateFormat("d MMM 'at' h:mm a", Locale.getDefault())
+                "last seen ${dateFormat.format(Date(timestamp))}"
+            }
         }
     }
 }

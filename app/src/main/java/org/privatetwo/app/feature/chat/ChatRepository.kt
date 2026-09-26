@@ -109,9 +109,11 @@ class ChatRepository(
                     }
                     is SignalingEvent.PeerDisconnected -> {
                         _isPeerOnline.value = false
-                        val now = System.currentTimeMillis()
-                        _peerLastSeenTimestamp.value = now
-                        secureStorage.partnerLastSeenTimestamp = now
+                        val effectiveTime = if (event.lastSeen > 0L) event.lastSeen else secureStorage.partnerLastSeenTimestamp
+                        if (effectiveTime > 0L) {
+                            _peerLastSeenTimestamp.value = effectiveTime
+                            secureStorage.partnerLastSeenTimestamp = effectiveTime
+                        }
                     }
                     else -> Unit
                 }
@@ -120,11 +122,16 @@ class ChatRepository(
 
         scope.launch {
             signalingClient.isPeerOnline.collect { online ->
+                val prev = _isPeerOnline.value
                 _isPeerOnline.value = online
-                val now = System.currentTimeMillis()
-                _peerLastSeenTimestamp.value = now
-                if (!online) {
+                if (online) {
+                    _peerLastSeenTimestamp.value = System.currentTimeMillis()
+                } else if (prev) {
+                    val now = System.currentTimeMillis()
+                    _peerLastSeenTimestamp.value = now
                     secureStorage.partnerLastSeenTimestamp = now
+                } else {
+                    _peerLastSeenTimestamp.value = secureStorage.partnerLastSeenTimestamp
                 }
             }
         }

@@ -33,7 +33,7 @@ sealed class SignalingEvent {
     data class PairingAccepted(val sessionId: String, val peerDeviceId: String) : SignalingEvent()
     data class PairHandshakeReceived(val payload: String) : SignalingEvent()
     data class PeerConnected(val peerDeviceId: String) : SignalingEvent()
-    object PeerDisconnected : SignalingEvent()
+    data class PeerDisconnected(val lastSeen: Long = 0L) : SignalingEvent()
     data class SdpOfferReceived(val sdp: String) : SignalingEvent()
     data class SdpAnswerReceived(val sdp: String) : SignalingEvent()
     data class IceCandidateReceived(val sdpMid: String, val sdpMLineIndex: Int, val candidate: String) : SignalingEvent()
@@ -355,7 +355,8 @@ class SignalingClient(
                 }
                 "PEER_DISCONNECTED", "PEER_OFFLINE" -> {
                     _isPeerOnline.value = false
-                    SignalingEvent.PeerDisconnected
+                    val lastSeen = json.optLong("lastSeen", 0L)
+                    SignalingEvent.PeerDisconnected(lastSeen)
                 }
                 "SDP_OFFER" -> SignalingEvent.SdpOfferReceived(json.getString("sdp"))
                 "SDP_ANSWER" -> SignalingEvent.SdpAnswerReceived(json.getString("sdp"))

@@ -81,14 +81,15 @@ fun rememberAntiPeepTiltState(enabled: Boolean): State<Boolean> {
                 val y = event.values[1]
                 val z = event.values[2]
 
-                // Calculate sideways roll angle in degrees
+                // Calculate sideways roll and pitch angles in degrees
                 val rollDegrees = Math.toDegrees(atan2(x.toDouble(), sqrt((y * y + z * z).toDouble())))
+                val pitchDegrees = Math.toDegrees(atan2(y.toDouble(), sqrt((x * x + z * z).toDouble())))
                 val absRoll = kotlin.math.abs(rollDegrees)
 
-                // Only trigger on severe tilt (> 65° sideways away from user)
-                if (!isTilted.value && absRoll > 65.0) {
+                // Responsive anti-peep trigger: natural wrist tilt (> 42°) or tilting screen away/down
+                if (!isTilted.value && (absRoll > 42.0 || pitchDegrees < -45.0)) {
                     isTilted.value = true
-                } else if (isTilted.value && absRoll < 35.0) {
+                } else if (isTilted.value && absRoll < 25.0 && pitchDegrees > -25.0) {
                     isTilted.value = false
                 }
             }
@@ -341,7 +342,7 @@ fun AntiPeepShieldOverlay(
             onClose = onDismissReadingCurtain
         )
 
-        // Emergency Tilt Alert (Only triggers on extreme tilt >65° if enabled)
+        // Emergency Tilt Alert (Triggers on natural protective wrist tilt >42° or screen-away tilt)
         AnimatedVisibility(
             visible = isTiltBlackoutActive && !isManualBlackoutActive,
             enter = fadeIn(),

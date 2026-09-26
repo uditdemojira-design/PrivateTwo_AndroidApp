@@ -313,8 +313,10 @@ function handleMessage(ws, msg) {
                     id: sessionId,
                     deviceA: ws,
                     deviceAId: devId,
+                    deviceALastSeen: Date.now(),
                     deviceB: null,
-                    deviceBId: expectedPeerId || null
+                    deviceBId: expectedPeerId || null,
+                    deviceBLastSeen: 0
                 };
                 sessions.set(sessionId, session);
                 wsToSession.set(ws, sessionId);
@@ -354,7 +356,12 @@ function handleMessage(ws, msg) {
                     safeSend(ws, { type: 'PEER_CONNECTED', peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId) });
                     safeSend(peerWs, { type: 'PEER_CONNECTED', peerDeviceId: devId });
                 } else {
-                    safeSend(ws, { type: 'PEER_DISCONNECTED', peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId) });
+                    const peerLastSeen = (session.deviceA === ws ? session.deviceBLastSeen : session.deviceALastSeen) || 0;
+                    safeSend(ws, { 
+                        type: 'PEER_DISCONNECTED', 
+                        peerDeviceId: expectedPeerId || (session.deviceA === ws ? session.deviceBId : session.deviceAId),
+                        lastSeen: peerLastSeen
+                    });
                 }
 
                 flushOfflineQueue(devId, ws);
@@ -433,15 +440,18 @@ function handleDisconnect(ws) {
         wsToSession.delete(ws);
         const session = sessions.get(sessionId);
         if (session) {
+            const now = Date.now();
+            if (session.deviceA === ws) {
+                session.deviceALastSeen = now;
+                session.deviceA = null;
+            }
+            if (session.deviceB === ws) {
+                session.deviceBLastSeen = now;
+                session.deviceB = null;
+            }
             const partnerWs = (session.deviceA === ws) ? session.deviceB : session.deviceA;
             if (partnerWs) {
-                safeSend(partnerWs, { type: 'PEER_DISCONNECTED' });
-            }
-            if (session.deviceA === ws) session.deviceA = null;
-            if (session.deviceB === ws) session.deviceB = null;
-
-            if (!session.deviceA && !session.deviceB) {
-                sessions.delete(sessionId);
+                safeSend(partnerWs, { type: 'PEER_DISCONNECTED', lastSeen: now });
             }
         }
     }
